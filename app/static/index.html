@@ -1894,25 +1894,27 @@ async function showObjectDetails(tableId, rowIndex) {
     if (oid) lookupSid = oid;
   }
 
-  // Build cypher query to get the full node
-  let nodeData = null;
+  // Build cypher queries to get node props + group memberships in parallel
+  let nodeData = null, groups = [];
   try {
-    if (lookupSid) {
-      const r = await fetch('/api/run', { method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({cypher: `MATCH (n) WHERE n.objectid = '${lookupSid}' RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
-      });
-      const d = await r.json();
-      if (d.success && d.data.length > 0) nodeData = { type: d.data[0]._type, props: d.data[0].props };
-    } else if (lookupName) {
-      const escaped = lookupName.replace(/'/g, "\\'");
-      const typeFilter = lookupType ? `:${lookupType}` : '';
-      const r = await fetch('/api/run', { method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE n.name = '${escaped}' RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
-      });
-      const d = await r.json();
-      if (d.success && d.data.length > 0) nodeData = { type: d.data[0]._type, props: d.data[0].props };
+    const where = lookupSid
+      ? `n.objectid = '${lookupSid}'`
+      : lookupName ? `n.name = '${lookupName.replace(/'/g,"\\'")}'` : null;
+
+    if (where) {
+      const typeFilter = (!lookupSid && lookupType) ? `:${lookupType}` : '';
+      const [nodeRes, groupRes] = await Promise.all([
+        fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
+        }),
+        fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({cypher: `MATCH (n)-[:MemberOf]->(g:Group) WHERE ${where} RETURN g.name AS name, g.admincount AS admincount, g.domain AS domain ORDER BY g.admincount DESC, g.name`})
+        })
+      ]);
+      const nd = await nodeRes.json();
+      const gd = await groupRes.json();
+      if (nd.success && nd.data.length > 0) nodeData = { type: nd.data[0]._type, props: nd.data[0].props };
+      if (gd.success) groups = gd.data;
     }
   } catch(e) { /* fallback to row data */ }
 
@@ -1921,13 +1923,31 @@ async function showObjectDetails(tableId, rowIndex) {
   const displayName = lookupName || lookupSid || 'Row';
   title.textContent = `${label} — ${displayName.split('@')[0]}`;
 
-  renderObjectDetails(nodeData?.props || null, objectData);
+  renderObjectDetails(nodeData?.props || null, objectData, groups);
 }
 
 
-function renderObjectDetails(fullProps, rowData) {
+function renderObjectDetails(fullProps, rowData, groups = []) {
   const content = document.getElementById('detailsContent');
   let html = '';
+
+  // Group Memberships
+  if (groups.length > 0) {
+    html += `<div class="details-section">`;
+    html += `<h4>Group Memberships (${groups.length})</h4>`;
+    groups.forEach(g => {
+      const shortName = g.name ? g.name.split('@')[0] : g.name;
+      const domain    = g.name && g.name.includes('@') ? g.name.split('@')[1] : '';
+      const isAdmin   = g.admincount;
+      const copyBtn   = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(g.name)}',this);event.stopPropagation();">${getCopyIcon()}</span>`;
+      html += `<div class="details-property">
+        <div class="details-value" style="color:${isAdmin ? 'var(--red)' : 'var(--text)'}">
+          ${isAdmin ? '<span style="color:var(--red);margin-right:4px">⚑</span>' : ''}${escHtml(shortName)}<span style="color:var(--text3);font-size:11px">@${escHtml(domain)}</span>${copyBtn}
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
 
   // Full node properties (fetched from Neo4j)
   if (fullProps && typeof fullProps === 'object' && Object.keys(fullProps).length > 0) {
