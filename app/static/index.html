@@ -1791,7 +1791,8 @@ async function uploadFile(file) {
 
   try {
     const r = await apiFetch('/api/upload', { method: 'POST', body: fd });
-    const d = await r.json();
+    let d;
+    try { d = await r.json(); } catch(_) { throw new Error(`Server error ${r.status}: ${r.statusText || 'unexpected response'}`); }
 
     if (d.error) {
       log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error)}</span><br>`;
