@@ -445,12 +445,7 @@
     top: 0;
     z-index: 10;
     text-transform: uppercase;
-    isolation: isolate;
-  }
-  thead {
-    position: sticky;
-    top: 0;
-    z-index: 11;
+    transform: translateZ(0);
   }
   tbody tr {
     transition: background .1s;
@@ -826,6 +821,7 @@
     position: sticky;
     top: 34px;
     z-index: 9;
+    transform: translateZ(0);
   }
   .col-filter-input {
     width: 100%;
