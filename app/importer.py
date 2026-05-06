@@ -38,6 +38,37 @@ TYPE_TO_LABEL = {
     'azmanagementgroup': 'AZManagementGroup',
 }
 
+# Allowlist of known BloodHound relationship types that can appear in ACE RightName fields.
+# Any value from user-supplied data not in this set is rejected before Cypher interpolation.
+ALLOWED_REL_TYPES = {
+    # Core edges
+    'MemberOf', 'HasSession', 'AdminTo', 'CanRDP', 'CanPSRemote', 'ExecuteDCOM',
+    'Contains', 'GpLink', 'TrustedBy', 'AllowedToDelegate', 'AllowedToAct',
+    'HasSIDHistory',
+    # ACE rights
+    'GenericAll', 'GenericWrite', 'WriteOwner', 'WriteDacl', 'AllExtendedRights',
+    'Owns', 'ForceChangePassword', 'AddMember', 'AddSelf',
+    'ReadLAPSPassword', 'ReadGMSAPassword',
+    'DCSync', 'GetChanges', 'GetChangesAll', 'GetChangesInFilteredSet',
+    'WriteAccountRestrictions', 'AddKeyCredentialLink', 'WriteSPN',
+    # ADCS
+    'Enroll', 'AutoEnroll', 'EnrollOnBehalfOf', 'OIDGroupLink',
+    'IssuedSignedBy', 'NTAuthStoreFor', 'RootCAFor', 'TrustedForNTAuth', 'HostsCAService',
+    'ExtendedByPolicy',
+    # Azure
+    'AZAddMembers', 'AZAddSecret', 'AZAvereContributor', 'AZContributor',
+    'AZExecuteCommand', 'AZGetCertificates', 'AZGetKeys', 'AZGetSecrets',
+    'AZGlobalAdmin', 'AZHasRole', 'AZKeyVaultContributor', 'AZLogicAppContributor',
+    'AZManagedIdentity', 'AZMemberOf', 'AZNodeResourceGroup', 'AZOwns',
+    'AZPrivilegedAuthAdmin', 'AZPrivilegedRoleAdmin', 'AZResetPassword', 'AZRunsAs',
+    'AZSyncedToAADUser', 'AZUserAccessAdministrator', 'AZVMContributor', 'AZVMAdminLogin',
+    'AZAppAdmin', 'AZCloudAppAdmin', 'AZDeviceOwner', 'AZMGAddMember',
+    'AZMGAddOwner', 'AZMGAddSecret', 'AZMGGrantAppRoles', 'AZMGGrantRole',
+}
+
+# Max decompressed bytes from a single ZIP upload (2 GB)
+MAX_DECOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+
 FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'container',
                    'certtemplate', 'enterpriseca', 'rootca', 'aiaca', 'ntauthstore']
 
@@ -50,8 +81,16 @@ class BloodHoundImporter:
         results = {'files': [], 'nodes': 0, 'relationships': 0, 'errors': []}
         try:
             data = file_obj.read() if hasattr(file_obj, 'read') else open(file_obj, 'rb').read()
+
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                json_files = [n for n in zf.namelist() if n.endswith('.json')]
+                # Zip-bomb guard: check total decompressed size before extracting
+                total_size = sum(i.file_size for i in zf.infolist())
+                if total_size > MAX_DECOMPRESSED_BYTES:
+                    return {'files': [], 'nodes': 0, 'relationships': 0,
+                            'errors': [f'ZIP decompressed size ({total_size} bytes) exceeds limit']}
+
+                json_files = [n for n in zf.namelist()
+                              if n.endswith('.json') and '/' not in n.strip('/')]
                 json_files.sort(key=lambda x: self._sort_key(x))
                 for fname in json_files:
                     try:
@@ -95,7 +134,12 @@ class BloodHoundImporter:
         if not data_type or not data:
             return {'nodes': 0, 'relationships': 0, 'errors': []}
 
-        label = TYPE_TO_LABEL.get(data_type.lower(), data_type.capitalize())
+        # Use only known labels — reject unknown data types rather than capitalizing user input
+        label = TYPE_TO_LABEL.get(data_type.lower())
+        if not label:
+            logger.warning(f"Unknown data type '{data_type}' in {filename} — skipping")
+            return {'nodes': 0, 'relationships': 0, 'errors': [f"Unknown type: {data_type}"]}
+
         nodes_created = 0
         rels_created = 0
         errors = []
@@ -131,13 +175,8 @@ class BloodHoundImporter:
                 obj_id = obj.get('ObjectIdentifier', props.get('objectid', ''))
                 if not obj_id:
                     continue
-                # Merge ObjectIdentifier into props if not already there
-                if not props:
-                    props = {'objectid': obj_id}
-                else:
-                    props = dict(props)  # Create a copy
-                    props['objectid'] = obj_id
-                # Sanitize: remove None values and non-primitive types
+                props = dict(props) if props else {}
+                props['objectid'] = obj_id
                 clean_props = {}
                 for k, v in props.items():
                     if v is None:
@@ -182,6 +221,10 @@ class BloodHoundImporter:
             right = ace.get('RightName', '')
             p_type = ace.get('PrincipalType', 'Base')
             if not src_id or not right:
+                continue
+            # Validate relationship type against allowlist before interpolating into Cypher
+            if right not in ALLOWED_REL_TYPES:
+                logger.debug(f"Skipping unknown ACE RightName: {right!r}")
                 continue
             src_label = TYPE_TO_LABEL.get(p_type.lower(), 'Base')
             inherited = ace.get('IsInherited', False)
@@ -242,7 +285,7 @@ class BloodHoundImporter:
                 except Exception:
                     pass
 
-        # --- Privilege / Local Group Collections ---
+        # --- Privilege / Local Group Collections (hardcoded rel types — not user input) ---
         collection_map = {
             'LocalAdmins': 'AdminTo',
             'RemoteDesktopUsers': 'CanRDP',
@@ -363,7 +406,7 @@ class BloodHoundImporter:
                 except Exception:
                     pass
 
-        # --- ADCS relationships ---
+        # --- ADCS relationships (all hardcoded rel types) ---
         for field, rel in [('IssuedSignedBy', 'IssuedSignedBy'), ('NTAuthStoreFor', 'NTAuthStoreFor'),
                             ('RootCAFor', 'RootCAFor'), ('TrustedForNTAuth', 'TrustedForNTAuth'),
                             ('HostsCAService', 'HostsCAService')]:

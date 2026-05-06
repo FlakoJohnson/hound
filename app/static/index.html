@@ -5,10 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>🐕 HOUND — BloodHound Query Engine</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<!-- Fonts: Inter for UI, JetBrains Mono for code/data -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Fonts loaded from system / browser cache — no external CDN -->
 <style>
   :root {
     --bg:        #000000;
@@ -745,6 +742,41 @@
   .neo-dot.err     { background: var(--red);    box-shadow: var(--glow-r); }
   .neo-dot.loading { background: var(--yellow); animation: blink 1s step-end infinite; }
 
+  /* ── Token Auth Overlay ── */
+  #tokenOverlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.92);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+  }
+  #tokenOverlay.visible { display: flex; }
+  .token-box {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 32px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 340px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  }
+  .token-title { color: var(--cyan); font-size: 14px; letter-spacing: 3px; text-transform: uppercase; }
+  .token-input {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .token-input:focus { border-color: var(--cyan); }
+
   /* scrollable results area */
   .panel-results {
     flex: 1;
@@ -982,6 +1014,33 @@
 <div id="toast"></div>
 
 <script>
+// ── Auth ───────────────────────────────────────────────────────────────────
+function getToken() { return sessionStorage.getItem('hound_token') || ''; }
+
+async function apiFetch(url, opts = {}) {
+  const token = getToken();
+  if (token) {
+    opts.headers = Object.assign({}, opts.headers || {}, {'X-Hound-Token': token});
+  }
+  const r = await fetch(url, opts);
+  if (r.status === 401) { showTokenOverlay(); throw new Error('Authentication required'); }
+  return r;
+}
+
+function showTokenOverlay() {
+  document.getElementById('tokenOverlay').classList.add('visible');
+  setTimeout(() => document.getElementById('tokenInput')?.focus(), 50);
+}
+
+async function submitToken() {
+  const t = document.getElementById('tokenInput').value.trim();
+  if (!t) return;
+  sessionStorage.setItem('hound_token', t);
+  document.getElementById('tokenOverlay').classList.remove('visible');
+  document.getElementById('tokenInput').value = '';
+  await init();
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let ALL_QUERIES = {};
 let currentQuery = null;
@@ -990,6 +1049,12 @@ let lastCustomData = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
+  // Check if auth is required before loading anything
+  try {
+    const h = await fetch('/api/health');
+    const hd = await h.json();
+    if (hd.auth && !getToken()) { showTokenOverlay(); return; }
+  } catch(e) {}
   await Promise.all([loadQueries(), checkHealth()]);
   refreshStats();
   loadDomains();
@@ -998,7 +1063,7 @@ async function init() {
 
 async function loadQueries() {
   try {
-    const r = await fetch('/api/queries');
+    const r = await apiFetch('/api/queries');
     ALL_QUERIES = await r.json();
     renderNav(ALL_QUERIES);
     const total = Object.values(ALL_QUERIES).reduce((s, q) => s + q.length, 0);
@@ -1014,7 +1079,7 @@ async function checkHealth() {
   dot.className = 'neo-dot loading';
   lbl.textContent = 'CONNECTING';
   try {
-    const r = await fetch('/api/health');
+    const r = await apiFetch('/api/health');
     const d = await r.json();
     if (d.status === 'ok') {
       dot.className = 'neo-dot ok';
@@ -1028,7 +1093,7 @@ async function checkHealth() {
 
 async function refreshStats() {
   try {
-    const r = await fetch('/api/stats');
+    const r = await apiFetch('/api/stats');
     const d = await r.json();
     ['User','Computer','Group','Domain','Relationships'].forEach(k => {
       const el = document.getElementById('s-' + k);
@@ -1114,7 +1179,7 @@ async function runQuery() {
   const t0 = performance.now();
 
   try {
-    const r = await fetch('/api/run', {
+    const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({cypher})
@@ -1144,7 +1209,7 @@ async function runCustomQuery() {
   const t0 = performance.now();
 
   try {
-    const r = await fetch('/api/run', {
+    const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({cypher})
@@ -1529,12 +1594,12 @@ async function ctxMarkOwned() {
   hideCtxMenu();
   const row = _ctxRow(), ident = _ctxIdent(row);
   if (!ident) return toast('Cannot identify node', 'err');
-  const where = ident.type === 'sid'
-    ? `n.objectid = '${ident.val.replace(/'/g,"\\'")}'`
-    : `n.name = '${ident.val.replace(/'/g,"\\'")}'`;
+  const [prop, cypher] = ident.type === 'sid'
+    ? ['objectid', 'MATCH (n) WHERE n.objectid = $val SET n.owned = true RETURN count(n) AS c']
+    : ['name',     'MATCH (n) WHERE n.name = $val SET n.owned = true RETURN count(n) AS c'];
   try {
-    const r = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cypher: `MATCH (n) WHERE ${where} SET n.owned = true RETURN count(n) AS c`})});
+    const r = await apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cypher, params: {val: ident.val}})});
     const d = await r.json();
     if (d.success && (d.data[0]?.c ?? 0) > 0) toast('✓ Marked owned: ' + ident.val.split('@')[0], 'ok');
     else toast('Node not found in graph', 'err');
@@ -1545,12 +1610,12 @@ async function ctxMarkHighValue() {
   hideCtxMenu();
   const row = _ctxRow(), ident = _ctxIdent(row);
   if (!ident) return toast('Cannot identify node', 'err');
-  const where = ident.type === 'sid'
-    ? `n.objectid = '${ident.val.replace(/'/g,"\\'")}'`
-    : `n.name = '${ident.val.replace(/'/g,"\\'")}'`;
+  const [prop, cypher] = ident.type === 'sid'
+    ? ['objectid', 'MATCH (n) WHERE n.objectid = $val SET n.highvalue = true RETURN count(n) AS c']
+    : ['name',     'MATCH (n) WHERE n.name = $val SET n.highvalue = true RETURN count(n) AS c'];
   try {
-    const r = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cypher: `MATCH (n) WHERE ${where} SET n.highvalue = true RETURN count(n) AS c`})});
+    const r = await apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cypher, params: {val: ident.val}})});
     const d = await r.json();
     if (d.success && (d.data[0]?.c ?? 0) > 0) toast('★ Marked high value: ' + ident.val.split('@')[0], 'ok');
     else toast('Node not found in graph', 'err');
@@ -1678,7 +1743,7 @@ async function uploadFile(file) {
   fd.append('file', file);
 
   try {
-    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const r = await apiFetch('/api/upload', { method: 'POST', body: fd });
     const d = await r.json();
 
     if (d.error) {
@@ -1703,7 +1768,7 @@ async function uploadFile(file) {
 async function clearDB() {
   if (!confirm('Clear ALL data from Neo4j? This cannot be undone.')) return;
   try {
-    await fetch('/api/clear', { method: 'POST' });
+    await apiFetch('/api/clear', { method: 'POST' });
     toast('Database cleared', 'ok');
     refreshStats();
     showEmpty();
@@ -1735,7 +1800,7 @@ document.addEventListener('keydown', e => {
 // ── Domain and Object Functions ────────────────────────────────────────────
 async function loadDomains() {
   try {
-    const r = await fetch('/api/run', {
+    const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({cypher: 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS domain ORDER BY domain'})
@@ -1775,36 +1840,22 @@ async function showObjectStats(objectType) {
   document.getElementById(`btn-${objectType.toLowerCase()}s`).classList.add('active');
 
   const domain = document.getElementById('domainSelect').value;
-  const domainFilter = domain !== 'all' ? ` WHERE n.domain = '${domain}'` : '';
+  const hasDomain = domain !== 'all';
   let cypher = '';
+  const params = hasDomain ? {domain} : {};
 
   if (objectType === 'User') {
-    cypher = `MATCH (n:User) WHERE n.name IS NOT NULL${domainFilter.replace(' WHERE ', ' AND ')} RETURN
-      n.name AS UPN,
-      n.domain AS Domain,
-      n.enabled AS Enabled,
-      n.admincount AS AdminCount,
-      n.lastlogon AS LastLogon,
-      n.samaccountname AS SAMAccount
-      ORDER BY n.admincount DESC, UPN`;
+    cypher = hasDomain
+      ? `MATCH (n:User) WHERE n.name IS NOT NULL AND n.domain = $domain RETURN n.name AS UPN, n.domain AS Domain, n.enabled AS Enabled, n.admincount AS AdminCount, n.lastlogon AS LastLogon, n.samaccountname AS SAMAccount ORDER BY n.admincount DESC, UPN`
+      : `MATCH (n:User) WHERE n.name IS NOT NULL RETURN n.name AS UPN, n.domain AS Domain, n.enabled AS Enabled, n.admincount AS AdminCount, n.lastlogon AS LastLogon, n.samaccountname AS SAMAccount ORDER BY n.admincount DESC, UPN`;
   } else if (objectType === 'Computer') {
-    cypher = `MATCH (n:Computer) WHERE n.name IS NOT NULL${domainFilter.replace(' WHERE ', ' AND ')} RETURN
-      n.name AS DNS_Name,
-      n.domain AS Domain,
-      n.operatingsystem AS Operating_System,
-      n.enabled AS Enabled,
-      n.lastlogon AS LastLogon,
-      n.serviceprincipalnames AS SPNs
-      ORDER BY DNS_Name`;
+    cypher = hasDomain
+      ? `MATCH (n:Computer) WHERE n.name IS NOT NULL AND n.domain = $domain RETURN n.name AS DNS_Name, n.domain AS Domain, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`
+      : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.domain AS Domain, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
   } else if (objectType === 'Group') {
-    cypher = `MATCH (n:Group)${domainFilter}
-      OPTIONAL MATCH (m)-[:MemberOf*1..]->(n)
-      RETURN n.name AS Group_Name,
-      n.domain AS Domain,
-      n.admincount AS AdminCount,
-      n.description AS Description,
-      count(DISTINCT m) AS Member_Count
-      ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
+    cypher = hasDomain
+      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
+      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
   } else if (objectType === 'Domain') {
     cypher = 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS Domain, count(n) AS Object_Count ORDER BY Domain';
   }
@@ -1815,10 +1866,10 @@ async function showObjectStats(objectType) {
   btn.disabled = true;
 
   try {
-    const r = await fetch('/api/run', {
+    const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cypher})
+      body: JSON.stringify({cypher, params})
     });
     const d = await r.json();
 
@@ -1904,10 +1955,10 @@ async function showObjectDetails(tableId, rowIndex) {
     if (where) {
       const typeFilter = (!lookupSid && lookupType) ? `:${lookupType}` : '';
       const [nodeRes, groupRes] = await Promise.all([
-        fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+        apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
         }),
-        fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+        apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n)-[:MemberOf]->(g:Group) WHERE ${where} RETURN g.name AS name, g.admincount AS admincount, g.domain AS domain ORDER BY g.admincount DESC, g.name`})
         })
       ]);
@@ -2000,6 +2051,16 @@ function closeDetails(event) {
 // ── Boot ───────────────────────────────────────────────────────────────────
 init();
 </script>
+
+<!-- Token Auth Overlay -->
+<div id="tokenOverlay">
+  <div class="token-box">
+    <div class="token-title">🔐 Authentication Required</div>
+    <div style="font-size:12px;color:var(--text2)">HOUND_TOKEN is set. Enter your token to continue.</div>
+    <input id="tokenInput" class="token-input" type="password" placeholder="Paste token here" onkeydown="if(event.key==='Enter')submitToken()">
+    <button class="btn btn-cyan" onclick="submitToken()">CONNECT</button>
+  </div>
+</div>
 
 <!-- Context Menu -->
 <div id="ctxMenu">
