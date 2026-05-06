@@ -1375,6 +1375,24 @@ function renderTable(d, scrollId, toolbarId, countId) {
   html += '</tbody></table>';
 
   scroll.innerHTML = `<div class="fade-in">${html}</div>`;
+  setupHeaderPointerBlock(scrollId);
+}
+
+function setupHeaderPointerBlock(scrollId) {
+  const scroll = document.getElementById(scrollId);
+  if (!scroll) return;
+  function update() {
+    const thead = scroll.querySelector('thead');
+    if (!thead) return;
+    const cutoff = scroll.getBoundingClientRect().top + thead.offsetHeight;
+    scroll.querySelectorAll('tbody tr').forEach(tr => {
+      tr.style.pointerEvents = tr.getBoundingClientRect().bottom <= cutoff ? 'none' : '';
+    });
+  }
+  if (scroll._hdrBlock) scroll.removeEventListener('scroll', scroll._hdrBlock);
+  scroll._hdrBlock = update;
+  scroll.addEventListener('scroll', update, { passive: true });
+  update();
 }
 
 function renderTableRow(scrollId, row, index, keys) {
