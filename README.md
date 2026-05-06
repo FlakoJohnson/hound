@@ -1,4 +1,4 @@
-# 🐕 HOUND — BloodHound Query Engine
+# 🐕 JACK HOUND — BloodHound Query Engine
 
 Red teamer's self-hosted BH query platform. Drop SharpHound ZIPs, get instant attack path analysis.
 
