@@ -19,6 +19,7 @@ TYPE_TO_LABEL = {
     'ou': 'OU',
     'ous': 'OU',
     'container': 'Container',
+    'containers': 'Container',
     'aiaca': 'AIACA',
     'rootca': 'RootCA',
     'enterpriseca': 'EnterpriseCA',
