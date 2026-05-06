@@ -45,4 +45,8 @@ services:
 
 volumes:
   neo4j_data:
+    external: true
+    name: bh-query-engine_neo4j_data
   neo4j_logs:
+    external: true
+    name: bh-query-engine_neo4j_logs
