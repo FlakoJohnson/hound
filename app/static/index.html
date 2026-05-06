@@ -8,6 +8,12 @@
 <!-- Fonts self-hosted — no external CDN -->
 <style>
 @font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  src: url('/static/fonts/jetbrains-mono-400.woff2') format('woff2');
+}
+@font-face {
   font-family: 'Orbitron';
   font-style: normal;
   font-weight: 400;
@@ -24,12 +30,6 @@
   font-style: normal;
   font-weight: 900;
   src: url('/static/fonts/orbitron-900.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Share Tech Mono';
-  font-style: normal;
-  font-weight: 400;
-  src: url('/static/fonts/share-tech-mono.woff2') format('woff2');
 }
 </style>
 <style>
@@ -50,7 +50,7 @@
     --text:      #d1d5db;
     --text2:     #6b7280;
     --text3:     #374151;
-    --font-mono: 'Share Tech Mono', 'Courier New', monospace;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
     --font-disp: 'Orbitron', monospace;
     --glow-c:    0 0 8px #64ffda66, 0 0 20px #64ffda33;
     --glow-g:    0 0 8px #a3e63566, 0 0 20px #a3e63533;
@@ -106,12 +106,12 @@
   }
 
   .logo {
-    font-family: var(--font-disp);
+    font-family: var(--font-mono);
     font-size: 20px;
-    font-weight: 900;
+    font-weight: 700;
     color: var(--cyan);
     text-shadow: var(--glow-c);
-    letter-spacing: 4px;
+    letter-spacing: 2px;
     display: flex;
     align-items: center;
     gap: 10px;
