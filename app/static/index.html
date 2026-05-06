@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>🐕 HOUND — BloodHound Query Engine</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<!-- Fonts: Inter for UI, JetBrains Mono for code/data -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #000000;
+    --bg2:       #030712;
+    --bg3:       #0a0e1a;
+    --panel:     #111827;
+    --border:    #1f2937;
+    --border2:   #374151;
+    --cyan:      #64ffda;
+    --cyan2:     #2dd4bf;
+    --green:     #a3e635;
+    --green2:    #84cc16;
+    --red:       #f43f5e;
+    --yellow:    #f59e0b;
+    --orange:    #f97316;
+    --text:      #d1d5db;
+    --text2:     #6b7280;
+    --text3:     #374151;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+    --font-disp: 'Inter', system-ui, -apple-system, sans-serif;
+    --glow-c:    0 0 8px #64ffda66, 0 0 20px #64ffda33;
+    --glow-g:    0 0 8px #a3e63566, 0 0 20px #a3e63533;
+    --glow-r:    0 0 8px #f43f5e66, 0 0 20px #f43f5e33;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Scanlines overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(100,255,218,0.012) 2px,
+      rgba(100,255,218,0.012) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    position: relative;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  }
+
+  .logo {
+    font-family: var(--font-disp);
+    font-size: 20px;
+    font-weight: 900;
+    color: var(--cyan);
+    text-shadow: var(--glow-c);
+    letter-spacing: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo span { color: var(--text2); font-size: 12px; font-weight: 400; letter-spacing: 2px; }
+
+  .stats-bar {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--text2);
+    transition: border-color .2s;
+  }
+  .stat-chip:hover { border-color: var(--border2); }
+  .stat-chip .val { color: var(--cyan); font-size: 13px; font-weight: bold; }
+  .stat-chip.green .val { color: var(--green); }
+  .stat-chip.yellow .val { color: var(--yellow); }
+
+  .header-actions { display: flex; gap: 8px; }
+
+  btn, .btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 14px;
+    border-radius: 3px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all .15s;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: transparent;
+  }
+  .btn-cyan   { color: var(--cyan);   border-color: var(--cyan);   }
+  .btn-cyan:hover   { background: rgba(100,255,218,.1); box-shadow: var(--glow-c); }
+  .btn-green  { color: var(--green);  border-color: var(--green);  }
+  .btn-green:hover  { background: rgba(163,230,53,.1); box-shadow: var(--glow-g); }
+  .btn-red    { color: var(--red);    border-color: var(--red);    }
+  .btn-red:hover    { background: rgba(244,63,94,.1); box-shadow: var(--glow-r); }
+  .btn-orange { color: var(--orange); border-color: var(--orange); }
+  .btn-orange:hover { background: rgba(249,115,22,.1); }
+  .btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* ── Layout ── */
+  .workspace {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    height: 100%;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sidebar-header .count { color: var(--cyan); }
+
+  .domain-selector {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .domain-dropdown {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 8px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    outline: none;
+    cursor: pointer;
+  }
+  .domain-dropdown:focus { border-color: var(--cyan); }
+
+  .object-buttons {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .obj-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 8px;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    cursor: pointer;
+    transition: all .15s;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .obj-btn:hover { color: var(--cyan); border-color: var(--border2); }
+  .obj-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(100,255,218,.06); }
+
+  .sidebar-scroll { overflow-y: auto; flex: 1; }
+  .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+  .sidebar-scroll::-webkit-scrollbar-track { background: var(--bg2); }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .category {
+    border-bottom: 1px solid var(--border);
+  }
+  .category-header {
+    padding: 10px 16px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text2);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    user-select: none;
+    transition: background .15s, color .15s;
+  }
+  .category-header:hover { background: var(--bg3); color: var(--cyan); }
+  .category-header.active { color: var(--cyan); }
+  .category-header .arrow { font-size: 9px; transition: transform .2s; }
+  .category-header.open .arrow { transform: rotate(90deg); }
+
+  .cat-badge {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 10px;
+    color: var(--text3);
+  }
+
+  .query-list { display: none; }
+  .query-list.open { display: block; }
+
+  .query-item {
+    padding: 8px 16px 8px 26px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text2);
+    border-left: 2px solid transparent;
+    transition: all .15s;
+    line-height: 1.4;
+  }
+  .query-item:hover { background: var(--bg3); color: var(--text); border-left-color: var(--border2); }
+  .query-item.active { background: rgba(100,255,218,.06); color: var(--cyan); border-left-color: var(--cyan); }
+  .query-item .q-name { display: block; }
+  .query-item .q-desc { display: block; font-size: 10px; color: var(--text3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── Main content ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Query panel ── */
+  .query-panel {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+    flex-shrink: 0;
+  }
+  .query-title {
+    font-family: var(--font-disp);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--cyan);
+    margin-bottom: 6px;
+    text-shadow: var(--glow-c);
+    letter-spacing: 2px;
+  }
+  .query-description { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+
+  .cypher-container {
+    position: relative;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .cypher-container:focus-within { border-color: var(--cyan); box-shadow: var(--glow-c); }
+
+  .cypher-label {
+    position: absolute;
+    top: 8px; left: 12px;
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+  textarea.cypher-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--green);
+    padding: 28px 12px 12px;
+    resize: vertical;
+    min-height: 80px;
+    max-height: 200px;
+    line-height: 1.5;
+  }
+  textarea.cypher-input::selection { background: rgba(100,255,218,.2); }
+
+  .query-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    align-items: center;
+  }
+  .query-actions .spacer { flex: 1; }
+  .exec-time { font-size: 11px; color: var(--text3); }
+
+  /* ── Tabs ── */
+  .tab-bar {
+    display: flex;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 10px 20px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--text3);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border-bottom: 2px solid transparent;
+    transition: all .15s;
+    user-select: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+  /* ── Results ── */
+  .results-container { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+  .results-toolbar {
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  .result-count {
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .result-count span { color: var(--green); font-weight: bold; }
+
+  .search-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    outline: none;
+    width: 220px;
+    transition: border-color .15s;
+  }
+  .search-box:focus { border-color: var(--cyan); }
+  .search-box::placeholder { color: var(--text3); }
+
+  .results-scroll { flex: 1; overflow: auto; }
+  .results-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .results-scroll::-webkit-scrollbar-track { background: var(--bg2); }
+  .results-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  thead th {
+    background: var(--bg3);
+    color: var(--cyan);
+    font-family: var(--font-disp);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 2px;
+    padding: 10px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    text-transform: uppercase;
+  }
+  tbody tr {
+    border-bottom: 1px solid rgba(31,41,55,0.6);
+    transition: background .1s;
+  }
+  tbody tr:hover { background: rgba(100,255,218,.03); }
+  tbody tr:nth-child(even) { background: rgba(10,14,26,.6); }
+  tbody tr:nth-child(even):hover { background: rgba(100,255,218,.05); }
+  td {
+    padding: 8px 16px;
+    color: var(--text);
+    max-width: 400px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+  td.highlight { color: var(--yellow); }
+  td.danger { color: var(--red); }
+  td.good { color: var(--green); }
+
+  /* special cell types */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .badge-user     { background: rgba(100,255,218,.1);  color: var(--cyan);   border: 1px solid rgba(100,255,218,.3); }
+  .badge-computer { background: rgba(163,230,53,.1);  color: var(--green);  border: 1px solid rgba(163,230,53,.3); }
+  .badge-group    { background: rgba(245,158,11,.1);  color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+  .badge-gpo      { background: rgba(249,115,22,.1);  color: var(--orange); border: 1px solid rgba(249,115,22,.3); }
+  .badge-domain   { background: rgba(244,63,94,.1);  color: var(--red);    border: 1px solid rgba(244,63,94,.3); }
+  .badge-other    { background: rgba(209,213,219,.1); color: var(--text);   border: 1px solid rgba(209,213,219,.3); }
+  .badge-true     { background: rgba(244,63,94,.15); color: var(--red); }
+  .badge-false    { background: rgba(163,230,53,.08); color: var(--green2); }
+
+  /* ── Sortable Headers ── */
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--cyan); background: rgba(100,255,218,0.06); }
+  th.sort-asc::after  { content: ' ↑'; color: var(--cyan); }
+  th.sort-desc::after { content: ' ↓'; color: var(--cyan); }
+
+  /* ── Copy Button ── */
+  .copy-btn {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 4px 6px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s;
+    font-size: 12px;
+    border-radius: 4px;
+    background: rgba(100,255,218,0.15);
+    border: 1px solid rgba(0,229,255,0.3);
+    vertical-align: middle;
+  }
+  .copy-btn:hover {
+    opacity: 1;
+    background: rgba(100,255,218,0.25);
+    border-color: rgba(100,255,218,0.5);
+    transform: scale(1.05);
+  }
+  .copy-btn svg {
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
+    fill: var(--cyan);
+    display: block;
+  }
+
+  /* ── Object Details Panel ── */
+  .details-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+  }
+  .details-panel {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 800px;
+    max-height: 80%;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    animation: slideIn 0.3s ease;
+  }
+  .details-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .details-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--cyan);
+  }
+  .details-close {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+    color: var(--text2);
+    transition: all 0.2s;
+  }
+  .details-close:hover {
+    background: var(--bg3);
+    color: var(--text);
+  }
+  .details-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .details-section {
+    margin-bottom: 20px;
+  }
+  .details-section h4 {
+    margin: 0 0 8px 0;
+    color: var(--text2);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .details-property {
+    display: flex;
+    margin-bottom: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .details-key {
+    width: 200px;
+    font-size: 12px;
+    color: var(--text3);
+    flex-shrink: 0;
+  }
+  .details-value {
+    flex: 1;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slideIn {
+    from { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
+    to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  }
+
+  /* ── Empty / Loading ── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text3);
+    gap: 12px;
+  }
+  .empty-icon {
+    font-size: 48px;
+    opacity: .3;
+    filter: grayscale(1);
+  }
+  .empty-text { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; }
+  .empty-sub  { font-size: 11px; color: var(--text3); }
+
+  .loading-bar {
+    width: 200px;
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .loading-bar-inner {
+    height: 100%;
+    background: var(--cyan);
+    box-shadow: var(--glow-c);
+    animation: loadAnim 1.2s ease-in-out infinite;
+  }
+  @keyframes loadAnim {
+    0%   { width: 0%; margin-left: 0; }
+    50%  { width: 60%; margin-left: 20%; }
+    100% { width: 0%; margin-left: 100%; }
+  }
+
+  /* ── Upload panel ── */
+  .upload-panel {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 40px;
+  }
+  .upload-panel.visible { display: flex; }
+
+  .drop-zone {
+    width: 500px;
+    max-width: 100%;
+    border: 2px dashed var(--border2);
+    border-radius: 8px;
+    padding: 48px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .2s;
+    background: var(--bg2);
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--cyan);
+    background: rgba(100,255,218,.04);
+    box-shadow: var(--glow-c);
+  }
+  .drop-zone input[type=file] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+  }
+  .drop-icon { font-size: 40px; margin-bottom: 12px; }
+  .drop-title { font-family: var(--font-disp); font-size: 16px; color: var(--cyan); letter-spacing: 2px; margin-bottom: 8px; }
+  .drop-sub { font-size: 12px; color: var(--text3); }
+
+  .upload-log {
+    width: 500px;
+    max-width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.8;
+    display: none;
+  }
+  .upload-log.visible { display: block; }
+  .log-ok    { color: var(--green); }
+  .log-err   { color: var(--red); }
+  .log-info  { color: var(--text2); }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 10px 20px;
+    font-size: 12px;
+    color: var(--text);
+    z-index: 9998;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all .25s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.toast-ok  { border-color: var(--green); color: var(--green); }
+  #toast.toast-err { border-color: var(--red);   color: var(--red);   }
+
+  /* ── Custom query tab ── */
+  .custom-query-view {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    padding: 20px;
+    gap: 12px;
+    overflow: hidden;
+  }
+  .custom-query-view.visible { display: flex; }
+  .custom-query-view .cypher-input { min-height: 160px; max-height: 300px; }
+
+  /* ── Tooltip ── */
+  [title] { cursor: help; }
+
+  /* ── Animations ── */
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn .2s ease-out; }
+
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* ── Neo4j status indicator ── */
+  .neo-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text3);
+  }
+  .neo-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text3);
+    transition: background .3s, box-shadow .3s;
+  }
+  .neo-dot.ok      { background: var(--green);  box-shadow: var(--glow-g); }
+  .neo-dot.err     { background: var(--red);    box-shadow: var(--glow-r); }
+  .neo-dot.loading { background: var(--yellow); animation: blink 1s step-end infinite; }
+
+  /* scrollable results area */
+  .panel-results {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ─────────────────────────────────── -->
+<header>
+  <div class="logo">
+    🐕 HOUND
+    <span>// AD QUERY ENGINE v2.0</span>
+  </div>
+
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-chip"><span>USERS</span><span class="val" id="s-User">–</span></div>
+    <div class="stat-chip green"><span>COMPUTERS</span><span class="val" id="s-Computer">–</span></div>
+    <div class="stat-chip yellow"><span>GROUPS</span><span class="val" id="s-Group">–</span></div>
+    <div class="stat-chip"><span>DOMAINS</span><span class="val" id="s-Domain">–</span></div>
+    <div class="stat-chip"><span>RELS</span><span class="val" id="s-Relationships">–</span></div>
+    <div class="neo-status">
+      <div class="neo-dot loading" id="neoDot"></div>
+      <span id="neoLabel">CONNECTING</span>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <button class="btn btn-orange" onclick="showTab('upload')">⬆ IMPORT</button>
+    <button class="btn btn-red"    onclick="clearDB()">⚡ CLEAR DB</button>
+    <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
+  </div>
+</header>
+
+<!-- ── WORKSPACE ──────────────────────────────── -->
+<div class="workspace">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span>QUERY LIBRARY</span>
+      <span class="count" id="queryCount">–</span>
+    </div>
+
+    <div class="domain-selector">
+      <span>DOMAIN:</span>
+      <select class="domain-dropdown" id="domainSelect" onchange="switchDomain()">
+        <option value="all">ALL DOMAINS</option>
+      </select>
+    </div>
+
+    <div class="object-buttons">
+      <button class="obj-btn" id="btn-users" onclick="showObjectStats('User')">Users</button>
+      <button class="obj-btn" id="btn-computers" onclick="showObjectStats('Computer')">Computers</button>
+      <button class="obj-btn" id="btn-groups" onclick="showObjectStats('Group')">Groups</button>
+      <button class="obj-btn" id="btn-domains" onclick="showObjectStats('Domain')">Domains</button>
+    </div>
+
+    <div class="sidebar-scroll" id="queryNav"></div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- QUERY EDITOR PANEL -->
+    <div class="query-panel" id="queryPanel" style="display:none">
+      <div class="query-title" id="qTitle">SELECT A QUERY</div>
+      <div class="query-description" id="qDesc"></div>
+      <div class="cypher-container">
+        <span class="cypher-label">CYPHER</span>
+        <textarea class="cypher-input" id="cypherInput" rows="4" spellcheck="false"></textarea>
+      </div>
+      <div class="query-actions">
+        <button class="btn btn-green" id="runBtn" onclick="runQuery()">▶ EXECUTE</button>
+        <button class="btn btn-cyan"  onclick="copyQuery()">⎘ COPY CYPHER</button>
+        <div class="spacer"></div>
+        <span class="exec-time" id="execTime"></span>
+      </div>
+    </div>
+
+    <!-- TABS -->
+    <div class="tab-bar" id="tabBar">
+      <div class="tab active" id="tab-results" onclick="showTab('results')">RESULTS</div>
+      <div class="tab"        id="tab-custom"  onclick="showTab('custom')">CUSTOM QUERY</div>
+      <div class="tab"        id="tab-upload"  onclick="showTab('upload')">IMPORT DATA</div>
+    </div>
+
+    <!-- RESULTS TAB -->
+    <div class="panel-results" id="view-results">
+      <div class="results-toolbar" id="resultsToolbar" style="display:none">
+        <div class="result-count" id="resultCount"></div>
+        <input class="search-box" id="filterBox" placeholder="filter results..." oninput="filterTable(this.value)">
+        <div class="spacer"></div>
+        <button class="btn btn-cyan"  onclick="exportCSV()">↓ CSV</button>
+        <button class="btn btn-green" onclick="copyTable()">⎘ COPY TABLE</button>
+      </div>
+      <div class="results-scroll" id="resultsScroll">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">🐾</div>
+          <div class="empty-text">NO QUERY EXECUTED</div>
+          <div class="empty-sub">Select a query from the sidebar or write your own</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CUSTOM QUERY TAB -->
+    <div class="custom-query-view" id="view-custom">
+      <div class="query-title">CUSTOM CYPHER QUERY</div>
+      <div class="cypher-container" style="flex-shrink:0">
+        <span class="cypher-label">CYPHER</span>
+        <textarea class="cypher-input" id="customInput" rows="8" spellcheck="false"
+          placeholder="MATCH (n:User) WHERE n.enabled = true RETURN n.name, n.domain LIMIT 25"></textarea>
+      </div>
+      <div class="query-actions">
+        <button class="btn btn-green" onclick="runCustomQuery()">▶ EXECUTE</button>
+        <button class="btn btn-cyan"  onclick="copyCustomQuery()">⎘ COPY</button>
+        <div class="spacer"></div>
+        <span class="exec-time" id="customExecTime"></span>
+      </div>
+      <div class="results-toolbar" id="customToolbar" style="display:none">
+        <div class="result-count" id="customCount"></div>
+        <input class="search-box" id="customFilter" placeholder="filter results..." oninput="filterCustomTable(this.value)">
+        <div class="spacer"></div>
+        <button class="btn btn-cyan"  onclick="exportCustomCSV()">↓ CSV</button>
+      </div>
+      <div class="results-scroll" id="customScroll" style="flex:1">
+        <div class="empty-state">
+          <div class="empty-icon">></div>
+          <div class="empty-text blink">_</div>
+          <div class="empty-sub">Write any Cypher query and execute</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- UPLOAD TAB -->
+    <div class="upload-panel" id="view-upload">
+      <div class="query-title" style="margin-bottom:0">IMPORT BLOODHOUND DATA</div>
+      <div style="font-size:12px; color:var(--text3); text-align:center; max-width:500px">
+        Upload SharpHound ZIP files or individual JSON files.<br>
+        Supports BloodHound v4/v5/CE SharpHound output format.
+      </div>
+      <div class="drop-zone" id="dropZone"
+           ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
+        <input type="file" id="fileInput" accept=".zip,.json" onchange="handleFileInput(event)">
+        <div class="drop-icon">📦</div>
+        <div class="drop-title">DROP ZIP / JSON HERE</div>
+        <div class="drop-sub">or click to browse — max 512MB</div>
+      </div>
+      <div class="upload-log" id="uploadLog"></div>
+      <div style="display:flex; gap:12px;">
+        <button class="btn btn-red" onclick="clearDB()">⚡ CLEAR DATABASE FIRST</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let ALL_QUERIES = {};
+let currentQuery = null;
+let lastResultData = null;
+let lastCustomData = null;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadQueries(), checkHealth()]);
+  refreshStats();
+  loadDomains();
+  setInterval(checkHealth, 15000);
+}
+
+async function loadQueries() {
+  try {
+    const r = await fetch('/api/queries');
+    ALL_QUERIES = await r.json();
+    renderNav(ALL_QUERIES);
+    const total = Object.values(ALL_QUERIES).reduce((s, q) => s + q.length, 0);
+    document.getElementById('queryCount').textContent = total;
+  } catch(e) {
+    toast('Failed to load queries', 'err');
+  }
+}
+
+async function checkHealth() {
+  const dot = document.getElementById('neoDot');
+  const lbl = document.getElementById('neoLabel');
+  dot.className = 'neo-dot loading';
+  lbl.textContent = 'CONNECTING';
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    if (d.status === 'ok') {
+      dot.className = 'neo-dot ok';
+      lbl.textContent = 'NEO4J OK';
+    } else throw new Error(d.neo4j);
+  } catch(e) {
+    dot.className = 'neo-dot err';
+    lbl.textContent = 'NEO4J DOWN';
+  }
+}
+
+async function refreshStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    ['User','Computer','Group','Domain','Relationships'].forEach(k => {
+      const el = document.getElementById('s-' + k);
+      if (el) el.textContent = (d[k] || 0).toLocaleString();
+    });
+  } catch(e) {}
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+function renderNav(queries) {
+  const nav = document.getElementById('queryNav');
+  nav.innerHTML = '';
+  Object.entries(queries).forEach(([cat, items]) => {
+    const catEl = document.createElement('div');
+    catEl.className = 'category';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'category-header';
+    hdr.innerHTML = `<span>${cat}</span><div style="display:flex;gap:8px;align-items:center"><span class="cat-badge">${items.length}</span><span class="arrow">▶</span></div>`;
+
+    const list = document.createElement('div');
+    list.className = 'query-list';
+
+    items.forEach(q => {
+      const item = document.createElement('div');
+      item.className = 'query-item';
+      item.dataset.id = q.id;
+      item.innerHTML = `<span class="q-name">${q.name}</span><span class="q-desc">${q.description}</span>`;
+      item.onclick = () => selectQuery(q, item);
+      list.appendChild(item);
+    });
+
+    hdr.onclick = () => {
+      const open = list.classList.toggle('open');
+      hdr.classList.toggle('open', open);
+      hdr.classList.toggle('active', open);
+    };
+
+    catEl.appendChild(hdr);
+    catEl.appendChild(list);
+    nav.appendChild(catEl);
+  });
+
+  // Auto-open first category
+  const firstHdr = nav.querySelector('.category-header');
+  if (firstHdr) firstHdr.click();
+}
+
+function selectQuery(q, el) {
+  // Deselect previous
+  document.querySelectorAll('.query-item.active').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  currentQuery = q;
+
+  document.getElementById('qTitle').textContent = q.name.toUpperCase();
+  document.getElementById('qDesc').textContent = q.description;
+  document.getElementById('cypherInput').value = q.cypher;
+  document.getElementById('queryPanel').style.display = '';
+  document.getElementById('execTime').textContent = '';
+
+  showTab('results');
+  // Clear previous results
+  showEmpty();
+}
+
+// ── Query Execution ────────────────────────────────────────────────────────
+function applyDomainFilter(d) {
+  const domain = document.getElementById('domainSelect').value;
+  if (domain === 'all' || !d.data?.length) return d;
+  // Find any column whose name contains 'domain'
+  const domainCols = d.keys.filter(k => k.toLowerCase().includes('domain'));
+  if (!domainCols.length) return d;  // no domain column — can't filter
+  const filtered = d.data.filter(row =>
+    domainCols.some(k => String(row[k] ?? '').toUpperCase() === domain.toUpperCase())
+  );
+  return {...d, data: filtered, count: filtered.length};
+}
+
+async function runQuery() {
+  const cypher = document.getElementById('cypherInput').value.trim();
+  if (!cypher) return;
+  setRunning(true);
+  const t0 = performance.now();
+
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({cypher})
+    });
+    const d = await r.json();
+    const ms = Math.round(performance.now() - t0);
+    document.getElementById('execTime').textContent = `${ms}ms`;
+
+    if (d.success) {
+      lastResultData = d;
+      renderTable(applyDomainFilter(d), 'resultsScroll', 'resultsToolbar', 'resultCount');
+    } else {
+      showError(d.error, 'resultsScroll');
+    }
+  } catch(e) {
+    showError(e.message, 'resultsScroll');
+  }
+  setRunning(false);
+}
+
+async function runCustomQuery() {
+  const cypher = document.getElementById('customInput').value.trim();
+  if (!cypher) return;
+  const btn = document.querySelector('#view-custom .btn-green');
+  btn.disabled = true;
+  btn.textContent = '⏳ RUNNING...';
+  const t0 = performance.now();
+
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({cypher})
+    });
+    const d = await r.json();
+    const ms = Math.round(performance.now() - t0);
+    document.getElementById('customExecTime').textContent = `${ms}ms`;
+
+    if (d.success) {
+      lastCustomData = d;
+      renderTable(d, 'customScroll', 'customToolbar', 'customCount');
+    } else {
+      showError(d.error, 'customScroll');
+    }
+  } catch(e) {
+    showError(e.message, 'customScroll');
+  }
+  btn.disabled = false;
+  btn.textContent = '▶ EXECUTE';
+}
+
+function setRunning(on) {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = on;
+  btn.textContent = on ? '⏳ RUNNING...' : '▶ EXECUTE';
+}
+
+// ── Copy to Clipboard ──────────────────────────────────────────────────────
+function escForOnclick(str) {
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function copyToClipboard(text, buttonElement) {
+  // Use fallback method for better compatibility
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.position = 'fixed';
+  textArea.style.top = '0';
+  textArea.style.left = '0';
+  textArea.style.width = '2em';
+  textArea.style.height = '2em';
+  textArea.style.padding = '0';
+  textArea.style.border = 'none';
+  textArea.style.outline = 'none';
+  textArea.style.boxShadow = 'none';
+  textArea.style.background = 'transparent';
+  document.body.appendChild(textArea);
+  textArea.select();
+
+  try {
+    const successful = document.execCommand('copy');
+    if (successful && buttonElement) {
+      // Flash effect
+      const original = buttonElement.innerHTML;
+      buttonElement.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>';
+      buttonElement.style.background = 'rgba(163,230,53,0.4)';
+      setTimeout(() => {
+        buttonElement.innerHTML = original;
+        buttonElement.style.background = 'rgba(100,255,218,0.15)';
+      }, 1000);
+    }
+  } catch (err) {
+    console.error('Copy failed:', err);
+  }
+
+  document.body.removeChild(textArea);
+}
+
+function getCopyIcon() {
+  return '<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+}
+
+function shouldShowCopyButton(key, val) {
+  if (!val || val === null || val === undefined) return false;
+  const k = key.toLowerCase();
+  const v = String(val);
+
+  // Show copy for names, SIDs, ObjectIDs, UPNs, DNS names, templates, etc.
+  if (k.includes('name') || k.includes('user') || k.includes('principal') ||
+      k.includes('controller') || k.includes('template') || k.includes('group') ||
+      k.includes('computer') || k.includes('dns') || k.includes('upn') ||
+      v.startsWith('S-1-5-') || v.includes('@') || v.includes('.')) {
+    return v.length > 3; // Don't show for very short values
+  }
+
+  return false;
+}
+
+// ── Table Rendering ────────────────────────────────────────────────────────
+function renderTable(d, scrollId, toolbarId, countId) {
+  const scroll = document.getElementById(scrollId);
+  const toolbar = document.getElementById(toolbarId);
+  const countEl = document.getElementById(countId);
+
+  if (!d.data || d.data.length === 0) {
+    scroll.innerHTML = `<div class="empty-state fade-in">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-text">NO RESULTS</div>
+      <div class="empty-sub">Query returned 0 rows</div>
+    </div>`;
+    toolbar.style.display = 'none';
+    return;
+  }
+
+  toolbar.style.display = '';
+  countEl.innerHTML = `ROWS: <span>${d.data.length.toLocaleString()}</span>`;
+
+  // Store row data safely in a JS variable keyed by table+index
+  window._tableRows = window._tableRows || {};
+  window._tableRows[scrollId] = d.data;
+  window._tableKeys = window._tableKeys || {};
+  window._tableKeys[scrollId] = d.keys;           // authoritative column order
+  window._tableOrig = window._tableOrig || {};
+  window._tableOrig[scrollId] = d.data;            // original unsorted copy for reset
+  window._tableSorts = window._tableSorts || {};
+  window._tableSorts[scrollId] = { col: null, dir: 0 }; // dir: 0=none,1=asc,-1=desc
+
+  const keys = d.keys;
+  let html = `<table id="${scrollId}-table"><thead><tr>`;
+  keys.forEach(k => {
+    html += `<th class="sortable" onclick="sortTable('${scrollId}', '${escForOnclick(k)}')">${k}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  d.data.forEach((row, index) => {
+    html += renderTableRow(scrollId, row, index, keys);
+  });
+  html += '</tbody></table>';
+
+  scroll.innerHTML = `<div class="fade-in">${html}</div>`;
+}
+
+function renderTableRow(scrollId, row, index, keys) {
+  let html = `<tr onclick="showObjectDetails('${scrollId}', ${index})" style="cursor:pointer;" title="Click for full object details">`;
+  keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
+  return html + '</tr>';
+}
+
+function sortTable(scrollId, col) {
+  const sort = window._tableSorts[scrollId];
+  if (sort.col === col) {
+    sort.dir = sort.dir === 1 ? -1 : sort.dir === -1 ? 0 : 1;
+  } else {
+    sort.col = col;
+    sort.dir = 1;
+  }
+
+  const table = document.getElementById(`${scrollId}-table`);
+  if (!table) return;
+
+  // Update header classes
+  table.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.textContent.trim() === col) {
+      if (sort.dir === 1)  th.classList.add('sort-asc');
+      if (sort.dir === -1) th.classList.add('sort-desc');
+    }
+  });
+
+  const keys = window._tableKeys[scrollId] || [];
+  let rows = sort.dir === 0
+    ? [...(window._tableOrig[scrollId] || [])]
+    : [...(window._tableOrig[scrollId] || [])];
+
+  if (sort.dir !== 0) {
+    rows.sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      const an = typeof av === 'number', bn = typeof bv === 'number';
+      const cmp = (an && bn) ? av - bv : String(av).localeCompare(String(bv), undefined, {numeric: true, sensitivity: 'base'});
+      return sort.dir * cmp;
+    });
+  }
+
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  tbody.innerHTML = rows.map((row, i) => renderTableRow(scrollId, row, i, keys)).join('');
+
+  // Update index mapping so row clicks still work after sort
+  window._tableRows[scrollId] = rows;
+}
+
+function renderCell(key, val) {
+  if (val === null || val === undefined) return '<span style="color:var(--text3)">null</span>';
+  if (Array.isArray(val)) return `<span style="color:var(--text2)">[${val.length > 3 ? val.slice(0,3).join(', ')+'…' : val.join(', ')}]</span>`;
+
+  const k = key.toLowerCase();
+  const v = String(val);
+
+  // Type badges
+  if (k === 'type' || k === 'objecttype' || k === 'controllertype' || k === 'srctype' || k === 'hvttype' || k === 'targettype') {
+    const cls = {user:'badge-user', computer:'badge-computer', group:'badge-group',
+                 gpo:'badge-gpo', domain:'badge-domain'}[v.toLowerCase()] || 'badge-other';
+    return `<span class="badge ${cls}">${v}</span>`;
+  }
+
+  // Boolean
+  if (val === true)  return `<span class="badge badge-true">TRUE</span>`;
+  if (val === false) return `<span class="badge badge-false">FALSE</span>`;
+
+  // Admin / high value highlight
+  if ((k === 'isadmin' || k === 'admincount' || k === 'highvalue') && val) {
+    return `<span style="color:var(--red)">⚑ ${v}</span>`;
+  }
+
+  // Name fields — highlight DA-related
+  if (k === 'user' || k === 'principal' || k === 'controller' || k === 'source') {
+    const copyBtn = shouldShowCopyButton(key, val) ?
+      `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(v)}', this); event.stopPropagation();">${getCopyIcon()}</span>` : '';
+    return `<span style="color:var(--text)">${escHtml(v)}${copyBtn}</span>`;
+  }
+
+  // Domain
+  if (k === 'domain' || k === 'targetdomain' || k === 'sourcedomain') {
+    const copyBtn = shouldShowCopyButton(key, val) ?
+      `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(v)}', this); event.stopPropagation();">${getCopyIcon()}</span>` : '';
+    return `<span style="color:var(--cyan2)">${escHtml(v)}${copyBtn}</span>`;
+  }
+
+  // Hops / counts — color by severity
+  if (k === 'hops' || k === 'pathlength' || k === 'hopstoda') {
+    const n = parseInt(v);
+    const color = n <= 2 ? 'var(--red)' : n <= 4 ? 'var(--orange)' : 'var(--yellow)';
+    return `<span style="color:${color};font-weight:bold">${v}</span>`;
+  }
+
+  if (k === 'admincount' || k === 'count' || k === 'membercount') {
+    const n = parseInt(v);
+    const color = n > 50 ? 'var(--red)' : n > 10 ? 'var(--orange)' : 'var(--text)';
+    return `<span style="color:${color}">${v}</span>`;
+  }
+
+  // Default case - add copy button if appropriate
+  if (shouldShowCopyButton(key, val)) {
+    const copyBtn = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(v)}', this); event.stopPropagation();">${getCopyIcon()}</span>`;
+    return `${escHtml(v)}${copyBtn}`;
+  }
+
+  return escHtml(v);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showEmpty() {
+  document.getElementById('resultsScroll').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">🐾</div>
+      <div class="empty-text">READY TO EXECUTE</div>
+      <div class="empty-sub">Click ▶ EXECUTE to run the selected query</div>
+    </div>`;
+  document.getElementById('resultsToolbar').style.display = 'none';
+  lastResultData = null;
+}
+
+function showError(msg, scrollId) {
+  document.getElementById(scrollId).innerHTML = `
+    <div class="empty-state fade-in">
+      <div class="empty-icon">⚠</div>
+      <div class="empty-text" style="color:var(--red)">QUERY ERROR</div>
+      <div class="empty-sub" style="color:var(--red);max-width:600px;text-align:center;word-break:break-word">${escHtml(msg)}</div>
+    </div>`;
+}
+
+// ── Filter ─────────────────────────────────────────────────────────────────
+function filterTable(val) {
+  const tbl = document.querySelector('#resultsScroll table');
+  if (!tbl) return;
+  const q = val.toLowerCase();
+  tbl.querySelectorAll('tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function filterCustomTable(val) {
+  const tbl = document.querySelector('#customScroll table');
+  if (!tbl) return;
+  const q = val.toLowerCase();
+  tbl.querySelectorAll('tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+function exportCSV() { doExportCSV(lastResultData, currentQuery?.name || 'results'); }
+function exportCustomCSV() { doExportCSV(lastCustomData, 'custom-query'); }
+
+function doExportCSV(d, name) {
+  if (!d?.data?.length) return toast('No data to export', 'err');
+  const keys = d.keys;
+  const rows = [keys.join(',')];
+  d.data.forEach(row => {
+    rows.push(keys.map(k => {
+      const v = row[k];
+      const s = Array.isArray(v) ? v.join(';') : String(v ?? '');
+      return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+    }).join(','));
+  });
+  const blob = new Blob([rows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `hound-${name.replace(/\s+/g,'-').toLowerCase()}.csv`;
+  a.click();
+  toast('CSV exported', 'ok');
+}
+
+function copyTable() {
+  if (!lastResultData?.data?.length) return toast('No data to copy', 'err');
+  const keys = lastResultData.keys;
+  const lines = [keys.join('\t')];
+  lastResultData.data.forEach(row => {
+    lines.push(keys.map(k => {
+      const v = row[k];
+      return Array.isArray(v) ? v.join(';') : String(v ?? '');
+    }).join('\t'));
+  });
+  copyToClipboard(lines.join('\n'));
+  toast('Table copied to clipboard', 'ok');
+}
+
+function copyQuery() {
+  const text = document.getElementById('cypherInput').value;
+  copyToClipboard(text);
+  toast('Cypher copied', 'ok');
+}
+
+function copyCustomQuery() {
+  const text = document.getElementById('customInput').value;
+  copyToClipboard(text);
+  toast('Cypher copied', 'ok');
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function showTab(name) {
+  ['results','custom','upload'].forEach(t => {
+    document.getElementById(`view-${t}`).style.display = 'none';
+    document.getElementById(`view-${t}`).classList.remove('visible');
+    const tab = document.getElementById(`tab-${t}`);
+    if (tab) tab.classList.remove('active');
+  });
+  const view = document.getElementById(`view-${name}`);
+  view.style.display = name === 'results' ? 'flex' : '';
+  view.classList.add('visible');
+  const tab = document.getElementById(`tab-${name}`);
+  if (tab) tab.classList.add('active');
+
+  // Show panel only on results tab
+  document.getElementById('queryPanel').style.display =
+    (name === 'results' && currentQuery) ? '' : 'none';
+}
+
+// ── Upload ─────────────────────────────────────────────────────────────────
+function dragOver(e) { e.preventDefault(); document.getElementById('dropZone').classList.add('drag-over'); }
+function dragLeave()  { document.getElementById('dropZone').classList.remove('drag-over'); }
+
+function dropFile(e) {
+  e.preventDefault();
+  dragLeave();
+  const f = e.dataTransfer.files[0];
+  if (f) uploadFile(f);
+}
+
+function handleFileInput(e) {
+  const f = e.target.files[0];
+  if (f) uploadFile(f);
+}
+
+async function uploadFile(file) {
+  const log = document.getElementById('uploadLog');
+  log.className = 'upload-log visible';
+  log.innerHTML = `<span class="log-info">⏳ Uploading ${escHtml(file.name)} (${(file.size/1024/1024).toFixed(1)} MB)...</span><br>`;
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+
+    if (d.error) {
+      log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error)}</span><br>`;
+    } else {
+      log.innerHTML += `<span class="log-ok">✓ Import complete</span><br>`;
+      log.innerHTML += `<span class="log-info">  Files: ${(d.files||[]).length}</span><br>`;
+      log.innerHTML += `<span class="log-info">  Nodes: ${(d.nodes||0).toLocaleString()}</span><br>`;
+      log.innerHTML += `<span class="log-info">  Relationships: ${(d.relationships||0).toLocaleString()}</span><br>`;
+      if (d.errors?.length) {
+        log.innerHTML += `<span class="log-err">  Warnings: ${d.errors.slice(0,5).map(escHtml).join('<br>  ')}</span><br>`;
+      }
+      toast('Import successful!', 'ok');
+      await refreshStats();
+      await checkHealth();
+    }
+  } catch(e) {
+    log.innerHTML += `<span class="log-err">✗ ${escHtml(e.message)}</span><br>`;
+  }
+}
+
+async function clearDB() {
+  if (!confirm('Clear ALL data from Neo4j? This cannot be undone.')) return;
+  try {
+    await fetch('/api/clear', { method: 'POST' });
+    toast('Database cleared', 'ok');
+    refreshStats();
+    showEmpty();
+  } catch(e) {
+    toast('Clear failed: ' + e.message, 'err');
+  }
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show toast-${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 2500);
+}
+
+// ── Keyboard shortcuts ─────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    const active = document.activeElement;
+    if (active?.id === 'customInput') runCustomQuery();
+    else runQuery();
+  }
+});
+
+// ── Domain and Object Functions ────────────────────────────────────────────
+async function loadDomains() {
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cypher: 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS domain ORDER BY domain'})
+    });
+    const d = await r.json();
+
+    const select = document.getElementById('domainSelect');
+    // Clear existing options except "ALL DOMAINS"
+    select.innerHTML = '<option value="all">ALL DOMAINS</option>';
+
+    if (d.success && d.data.length > 0) {
+      d.data.forEach(row => {
+        if (row.domain) {
+          const option = document.createElement('option');
+          option.value = row.domain;
+          option.textContent = row.domain;
+          select.appendChild(option);
+        }
+      });
+    }
+  } catch(e) {
+    console.log('Failed to load domains:', e);
+  }
+}
+
+function switchDomain() {
+  refreshStats();
+  // Re-render last result with new domain filter (no extra network call)
+  if (lastResultData) {
+    renderTable(applyDomainFilter(lastResultData), 'resultsScroll', 'resultsToolbar', 'resultCount');
+  }
+}
+
+async function showObjectStats(objectType) {
+  // Clear active states
+  document.querySelectorAll('.obj-btn').forEach(btn => btn.classList.remove('active'));
+  document.getElementById(`btn-${objectType.toLowerCase()}s`).classList.add('active');
+
+  const domain = document.getElementById('domainSelect').value;
+  const domainFilter = domain !== 'all' ? ` WHERE n.domain = '${domain}'` : '';
+  let cypher = '';
+
+  if (objectType === 'User') {
+    cypher = `MATCH (n:User) WHERE n.name IS NOT NULL${domainFilter.replace(' WHERE ', ' AND ')} RETURN
+      n.name AS UPN,
+      n.domain AS Domain,
+      n.enabled AS Enabled,
+      n.admincount AS AdminCount,
+      n.lastlogon AS LastLogon,
+      n.samaccountname AS SAMAccount
+      ORDER BY n.admincount DESC, UPN`;
+  } else if (objectType === 'Computer') {
+    cypher = `MATCH (n:Computer) WHERE n.name IS NOT NULL${domainFilter.replace(' WHERE ', ' AND ')} RETURN
+      n.name AS DNS_Name,
+      n.domain AS Domain,
+      n.operatingsystem AS Operating_System,
+      n.enabled AS Enabled,
+      n.lastlogon AS LastLogon,
+      n.serviceprincipalnames AS SPNs
+      ORDER BY DNS_Name`;
+  } else if (objectType === 'Group') {
+    cypher = `MATCH (n:Group)${domainFilter}
+      OPTIONAL MATCH (m)-[:MemberOf*1..]->(n)
+      RETURN n.name AS Group_Name,
+      n.domain AS Domain,
+      n.admincount AS AdminCount,
+      n.description AS Description,
+      count(DISTINCT m) AS Member_Count
+      ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
+  } else if (objectType === 'Domain') {
+    cypher = 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS Domain, count(n) AS Object_Count ORDER BY Domain';
+  }
+
+  const btn = document.getElementById(`btn-${objectType.toLowerCase()}s`);
+  const originalText = btn.textContent;
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cypher})
+    });
+    const d = await r.json();
+
+    if (d.success) {
+      lastResultData = d;
+      renderTable(d, 'resultsScroll', 'resultsToolbar', 'resultCount');
+      showTab('results');
+      document.getElementById('qTitle').textContent = `${objectType.toUpperCase()} LIST`;
+      document.getElementById('qDesc').textContent = `All ${objectType.toLowerCase()} objects in the dataset`;
+      document.getElementById('cypherInput').value = cypher;
+      document.getElementById('queryPanel').style.display = '';
+    } else {
+      showError(d.error, 'resultsScroll');
+    }
+  } catch(e) {
+    showError(e.message, 'resultsScroll');
+  }
+
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
+
+// ── Object Details Panel ───────────────────────────────────────────────────
+async function showObjectDetails(tableId, rowIndex) {
+  const objectData = (window._tableRows?.[tableId] || [])[rowIndex];
+  if (!objectData) return;
+  const overlay = document.getElementById('detailsOverlay');
+  const title = document.getElementById('detailsTitle');
+  const content = document.getElementById('detailsContent');
+
+  overlay.style.display = 'block';
+  content.innerHTML = '<div style="padding:20px;color:var(--text2)">Fetching full object data...</div>';
+
+  // Scan ALL key-value pairs to find an identifier AND infer node type
+  let lookupName = null;
+  let lookupSid  = null;
+  let lookupType = null;  // neo4j label to filter on
+
+  // Column name → Neo4j label mapping
+  const colTypeMap = {
+    'user': 'User', 'upn': 'User', 'samaccount': 'User', 'domainadmin': 'User',
+    'ownednode': 'User',
+    'computer': 'Computer', 'dns_name': 'Computer', 'dnsname': 'Computer',
+    'sqlserver': 'Computer',
+    'group': 'Group', 'group_name': 'Group', 'targetgroup': 'Group',
+    'template': 'Certtemplates',
+    'gpo': 'GPO',
+  };
+
+  // First pass: look for SID in any value
+  for (const v of Object.values(objectData)) {
+    if (v && typeof v === 'string' && v.startsWith('S-1-5-')) {
+      lookupSid = v;
+      break;
+    }
+  }
+
+  // Second pass: look for UPN-style name, tracking which column it came from
+  if (!lookupSid) {
+    for (const [k, v] of Object.entries(objectData)) {
+      if (!v || typeof v !== 'string') continue;
+      if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
+        lookupName = v;
+        lookupType = colTypeMap[k.toLowerCase()] || null;
+        break;
+      }
+    }
+  }
+
+  // Also check objectid/GUID fields directly
+  if (!lookupName && !lookupSid) {
+    const oid = objectData.objectid || objectData.ObjectID || objectData.GUID;
+    if (oid) lookupSid = oid;
+  }
+
+  // Build cypher query to get the full node
+  let nodeData = null;
+  try {
+    if (lookupSid) {
+      const r = await fetch('/api/run', { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({cypher: `MATCH (n) WHERE n.objectid = '${lookupSid}' RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
+      });
+      const d = await r.json();
+      if (d.success && d.data.length > 0) nodeData = { type: d.data[0]._type, props: d.data[0].props };
+    } else if (lookupName) {
+      const escaped = lookupName.replace(/'/g, "\\'");
+      const typeFilter = lookupType ? `:${lookupType}` : '';
+      const r = await fetch('/api/run', { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE n.name = '${escaped}' RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
+      });
+      const d = await r.json();
+      if (d.success && d.data.length > 0) nodeData = { type: d.data[0]._type, props: d.data[0].props };
+    }
+  } catch(e) { /* fallback to row data */ }
+
+  // Set title
+  const label = nodeData?.type || objectData.Type || 'Object';
+  const displayName = lookupName || lookupSid || 'Row';
+  title.textContent = `${label} — ${displayName.split('@')[0]}`;
+
+  renderObjectDetails(nodeData?.props || null, objectData);
+}
+
+
+function renderObjectDetails(fullProps, rowData) {
+  const content = document.getElementById('detailsContent');
+  let html = '';
+
+  // Full node properties (fetched from Neo4j)
+  if (fullProps && typeof fullProps === 'object' && Object.keys(fullProps).length > 0) {
+    html += '<div class="details-section">';
+    html += '<h4>All Object Properties</h4>';
+    // Sort: name/objectid first, then alphabetical
+    const sorted = Object.entries(fullProps).sort(([a], [b]) => {
+      const priority = ['name','objectid','domain','samaccountname','enabled','admincount'];
+      const ai = priority.indexOf(a.toLowerCase()), bi = priority.indexOf(b.toLowerCase());
+      if (ai >= 0 && bi >= 0) return ai - bi;
+      if (ai >= 0) return -1;
+      if (bi >= 0) return 1;
+      return a.localeCompare(b);
+    });
+    sorted.forEach(([key, value]) => {
+      if (value === null || value === undefined) return;
+      const displayValue = Array.isArray(value) ? value.join('\n') : String(value);
+      const copyBtn = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(displayValue.replace(/\n/g,'\\n'))}', this); event.stopPropagation();">${getCopyIcon()}</span>`;
+      html += `<div class="details-property">
+        <div class="details-key">${escHtml(key)}</div>
+        <div class="details-value">${escHtml(Array.isArray(value) ? value.join(', ') : displayValue)}${copyBtn}</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Always show the query row data too
+  html += '<div class="details-section">';
+  html += `<h4>${fullProps ? 'Query Row' : 'Row Data (no full node found)'}</h4>`;
+  Object.entries(rowData).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    const displayValue = Array.isArray(value) ? value.join(', ') : String(value);
+    const copyBtn = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(displayValue)}', this); event.stopPropagation();">${getCopyIcon()}</span>`;
+    html += `<div class="details-property">
+      <div class="details-key">${escHtml(key)}</div>
+      <div class="details-value">${escHtml(displayValue)}${copyBtn}</div>
+    </div>`;
+  });
+  html += '</div>';
+
+  content.innerHTML = html || '<div style="color:var(--text3);padding:20px">No data available</div>';
+}
+
+function closeDetails(event) {
+  if (!event || event.target.id === 'detailsOverlay' || event.target.classList.contains('details-close')) {
+    document.getElementById('detailsOverlay').style.display = 'none';
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+init();
+</script>
+
+<!-- Object Details Panel -->
+<div id="detailsOverlay" class="details-overlay" onclick="closeDetails(event)">
+  <div class="details-panel" onclick="event.stopPropagation()">
+    <div class="details-header">
+      <div class="details-title" id="detailsTitle">Object Details</div>
+      <div class="details-close" onclick="closeDetails()">✕</div>
+    </div>
+    <div class="details-content" id="detailsContent">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
