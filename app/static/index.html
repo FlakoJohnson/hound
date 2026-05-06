@@ -752,6 +752,79 @@
     flex-direction: column;
     overflow: hidden;
   }
+
+  /* ── Column Filters ── */
+  thead tr.col-filter-row th {
+    background: var(--bg2);
+    padding: 4px 6px;
+    border-bottom: 2px solid var(--border2);
+    position: sticky;
+    top: 34px;
+    z-index: 9;
+  }
+  .col-filter-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 3px 6px;
+    outline: none;
+    transition: border-color .15s, color .15s;
+    min-width: 60px;
+  }
+  .col-filter-input:focus {
+    border-color: var(--cyan);
+    color: var(--text);
+    box-shadow: 0 0 0 1px rgba(100,255,218,.15);
+  }
+  .col-filter-input::placeholder { color: var(--text3); font-size: 9px; }
+
+  /* ── Context Menu ── */
+  #ctxMenu {
+    position: fixed;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.7), 0 0 0 1px rgba(100,255,218,.05);
+    z-index: 9500;
+    display: none;
+    min-width: 190px;
+    overflow: hidden;
+    animation: fadeIn .1s ease-out;
+  }
+  .ctx-label {
+    padding: 6px 14px 4px;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text3);
+    text-transform: uppercase;
+    font-family: var(--font-disp);
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ctx-separator { height: 1px; background: var(--border); margin: 2px 0; }
+  .ctx-item {
+    padding: 7px 14px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background .08s;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .ctx-item:hover { background: rgba(100,255,218,.07); color: var(--cyan); }
+  .ctx-item.danger { color: var(--red); }
+  .ctx-item.danger:hover { background: rgba(244,63,94,.1); color: var(--red); }
+  .ctx-item.good { color: var(--green); }
+  .ctx-item.good:hover { background: rgba(163,230,53,.08); color: var(--green); }
 </style>
 </head>
 <body>
@@ -1188,11 +1261,17 @@ function renderTable(d, scrollId, toolbarId, countId) {
   window._tableOrig[scrollId] = d.data;            // original unsorted copy for reset
   window._tableSorts = window._tableSorts || {};
   window._tableSorts[scrollId] = { col: null, dir: 0 }; // dir: 0=none,1=asc,-1=desc
+  window._colFilters = window._colFilters || {};
+  window._colFilters[scrollId] = {};
 
   const keys = d.keys;
   let html = `<table id="${scrollId}-table"><thead><tr>`;
   keys.forEach(k => {
     html += `<th class="sortable" onclick="sortTable('${scrollId}', '${escForOnclick(k)}')">${k}</th>`;
+  });
+  html += `</tr><tr class="col-filter-row" onclick="event.stopPropagation()">`;
+  keys.forEach(k => {
+    html += `<th><input class="col-filter-input" placeholder="▼ filter" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"></th>`;
   });
   html += `</tr></thead><tbody>`;
 
@@ -1205,7 +1284,7 @@ function renderTable(d, scrollId, toolbarId, countId) {
 }
 
 function renderTableRow(scrollId, row, index, keys) {
-  let html = `<tr onclick="showObjectDetails('${scrollId}', ${index})" style="cursor:pointer;" title="Click for full object details">`;
+  let html = `<tr onclick="showObjectDetails('${scrollId}',${index})" oncontextmenu="showCtxMenu(event,'${scrollId}',${index})" style="cursor:pointer;" title="Click for details / Right-click for actions">`;
   keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
   return html + '</tr>';
 }
@@ -1355,6 +1434,155 @@ function filterCustomTable(val) {
   tbl.querySelectorAll('tbody tr').forEach(tr => {
     tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
+}
+
+// ── Column Filters ─────────────────────────────────────────────────────────
+function colFilter(scrollId, inputEl, col) {
+  window._colFilters = window._colFilters || {};
+  window._colFilters[scrollId] = window._colFilters[scrollId] || {};
+  window._colFilters[scrollId][col] = inputEl.value.toLowerCase();
+  applyColFilters(scrollId);
+}
+
+function applyColFilters(scrollId) {
+  const filters = window._colFilters?.[scrollId] || {};
+  const rows = window._tableRows?.[scrollId];
+  if (!rows) return;
+  const table = document.getElementById(`${scrollId}-table`);
+  if (!table) return;
+  const trs = table.querySelectorAll('tbody tr');
+  trs.forEach((tr, i) => {
+    const row = rows[i];
+    if (!row) { tr.style.display = ''; return; }
+    const show = Object.entries(filters).every(([col, q]) => {
+      if (!q) return true;
+      const val = row[col];
+      return val !== null && val !== undefined && String(val).toLowerCase().includes(q);
+    });
+    tr.style.display = show ? '' : 'none';
+  });
+}
+
+// ── Context Menu ───────────────────────────────────────────────────────────
+let _ctxScrollId = null, _ctxRowIdx = null;
+
+function showCtxMenu(e, scrollId, rowIndex) {
+  e.preventDefault();
+  e.stopPropagation();
+  _ctxScrollId = scrollId;
+  _ctxRowIdx = rowIndex;
+
+  const row = (window._tableRows?.[scrollId] || [])[rowIndex];
+  const menu = document.getElementById('ctxMenu');
+  const lbl  = document.getElementById('ctxNodeLabel');
+
+  // Find best display name
+  let name = '';
+  if (row) {
+    for (const v of Object.values(row)) {
+      if (v && typeof v === 'string' && v.includes('@') && v.includes('.') && !v.startsWith('{')) {
+        name = v; break;
+      }
+    }
+    if (!name) {
+      const first = Object.values(row).find(v => v && typeof v === 'string' && v.length > 2);
+      if (first) name = String(first);
+    }
+  }
+  lbl.textContent = name ? name.split('@')[0].slice(0, 28) : 'NODE';
+
+  const vw = window.innerWidth, vh = window.innerHeight;
+  menu.style.display = 'block';
+  const mw = 200, mh = 220;
+  menu.style.left = (e.clientX + mw > vw ? vw - mw - 8 : e.clientX) + 'px';
+  menu.style.top  = (e.clientY + mh > vh ? vh - mh - 8 : e.clientY) + 'px';
+}
+
+function hideCtxMenu() {
+  document.getElementById('ctxMenu').style.display = 'none';
+}
+
+document.addEventListener('click', () => hideCtxMenu());
+document.addEventListener('scroll', () => hideCtxMenu(), true);
+
+function _ctxRow() {
+  return (_ctxScrollId !== null && _ctxRowIdx !== null)
+    ? (window._tableRows?.[_ctxScrollId] || [])[_ctxRowIdx]
+    : null;
+}
+
+function _ctxIdent(row) {
+  if (!row) return null;
+  for (const [, v] of Object.entries(row)) {
+    if (v && typeof v === 'string' && v.startsWith('S-1-5-')) return { type: 'sid', val: v };
+  }
+  const oid = row.objectid || row.ObjectID;
+  if (oid) return { type: 'sid', val: String(oid) };
+  for (const [, v] of Object.entries(row)) {
+    if (v && typeof v === 'string' && v.includes('@') && v.includes('.') && !v.startsWith('{'))
+      return { type: 'name', val: v };
+  }
+  return null;
+}
+
+async function ctxMarkOwned() {
+  hideCtxMenu();
+  const row = _ctxRow(), ident = _ctxIdent(row);
+  if (!ident) return toast('Cannot identify node', 'err');
+  const where = ident.type === 'sid'
+    ? `n.objectid = '${ident.val.replace(/'/g,"\\'")}'`
+    : `n.name = '${ident.val.replace(/'/g,"\\'")}'`;
+  try {
+    const r = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cypher: `MATCH (n) WHERE ${where} SET n.owned = true RETURN count(n) AS c`})});
+    const d = await r.json();
+    if (d.success && (d.data[0]?.c ?? 0) > 0) toast('✓ Marked owned: ' + ident.val.split('@')[0], 'ok');
+    else toast('Node not found in graph', 'err');
+  } catch(e) { toast('Error: ' + e.message, 'err'); }
+}
+
+async function ctxMarkHighValue() {
+  hideCtxMenu();
+  const row = _ctxRow(), ident = _ctxIdent(row);
+  if (!ident) return toast('Cannot identify node', 'err');
+  const where = ident.type === 'sid'
+    ? `n.objectid = '${ident.val.replace(/'/g,"\\'")}'`
+    : `n.name = '${ident.val.replace(/'/g,"\\'")}'`;
+  try {
+    const r = await fetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cypher: `MATCH (n) WHERE ${where} SET n.highvalue = true RETURN count(n) AS c`})});
+    const d = await r.json();
+    if (d.success && (d.data[0]?.c ?? 0) > 0) toast('★ Marked high value: ' + ident.val.split('@')[0], 'ok');
+    else toast('Node not found in graph', 'err');
+  } catch(e) { toast('Error: ' + e.message, 'err'); }
+}
+
+function ctxCopyName() {
+  hideCtxMenu();
+  const row = _ctxRow(), ident = _ctxIdent(row);
+  if (ident) { copyToClipboard(ident.val); toast('Copied: ' + ident.val.split('@')[0], 'ok'); return; }
+  const first = row && Object.values(row).find(v => v && typeof v === 'string');
+  if (first) { copyToClipboard(first); toast('Copied', 'ok'); }
+}
+
+function ctxCopySID() {
+  hideCtxMenu();
+  const row = _ctxRow();
+  if (!row) return;
+  for (const v of Object.values(row)) {
+    if (v && typeof v === 'string' && v.startsWith('S-1-5-')) { copyToClipboard(v); toast('Copied SID', 'ok'); return; }
+  }
+  const oid = row.objectid || row.ObjectID || row.GUID;
+  if (oid) { copyToClipboard(String(oid)); toast('Copied ObjectID', 'ok'); return; }
+  toast('No SID/ObjectID in row', 'err');
+}
+
+function ctxCopyRowJSON() {
+  hideCtxMenu();
+  const row = _ctxRow();
+  if (!row) return;
+  copyToClipboard(JSON.stringify(row, null, 2));
+  toast('Row copied as JSON', 'ok');
 }
 
 // ── Export ─────────────────────────────────────────────────────────────────
@@ -1752,6 +1980,18 @@ function closeDetails(event) {
 // ── Boot ───────────────────────────────────────────────────────────────────
 init();
 </script>
+
+<!-- Context Menu -->
+<div id="ctxMenu">
+  <div class="ctx-label" id="ctxNodeLabel">NODE</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item danger"  onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
+  <div class="ctx-item good"    onclick="ctxMarkHighValue()">★ Mark High Value</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item"         onclick="ctxCopyName()">⎘ Copy Name</div>
+  <div class="ctx-item"         onclick="ctxCopySID()">⎘ Copy SID / ObjectID</div>
+  <div class="ctx-item"         onclick="ctxCopyRowJSON()">⎘ Copy Row as JSON</div>
+</div>
 
 <!-- Object Details Panel -->
 <div id="detailsOverlay" class="details-overlay" onclick="closeDetails(event)">
