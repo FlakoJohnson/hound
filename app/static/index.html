@@ -426,7 +426,8 @@
 
   table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 12px;
   }
   thead th {
@@ -444,9 +445,14 @@
     top: 0;
     z-index: 10;
     text-transform: uppercase;
+    isolation: isolate;
+  }
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 11;
   }
   tbody tr {
-    border-bottom: 1px solid rgba(31,41,55,0.6);
     transition: background .1s;
   }
   tbody tr:hover { background: rgba(100,255,218,.03); }
@@ -460,6 +466,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: middle;
+    border-bottom: 1px solid rgba(31,41,55,0.6);
   }
   td.highlight { color: var(--yellow); }
   td.danger { color: var(--red); }
