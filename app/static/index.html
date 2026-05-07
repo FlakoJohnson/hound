@@ -445,7 +445,6 @@
     top: 0;
     z-index: 10;
     text-transform: uppercase;
-    transform: translateZ(0);
   }
   tbody tr {
     transition: background .1s;
@@ -821,7 +820,6 @@
     position: sticky;
     top: 34px;
     z-index: 9;
-    transform: translateZ(0);
   }
   .col-filter-input {
     width: 100%;
@@ -1375,24 +1373,6 @@ function renderTable(d, scrollId, toolbarId, countId) {
   html += '</tbody></table>';
 
   scroll.innerHTML = `<div class="fade-in">${html}</div>`;
-  setupHeaderPointerBlock(scrollId);
-}
-
-function setupHeaderPointerBlock(scrollId) {
-  const scroll = document.getElementById(scrollId);
-  if (!scroll) return;
-  function update() {
-    const thead = scroll.querySelector('thead');
-    if (!thead) return;
-    const cutoff = scroll.getBoundingClientRect().top + thead.offsetHeight;
-    scroll.querySelectorAll('tbody tr').forEach(tr => {
-      tr.style.pointerEvents = tr.getBoundingClientRect().bottom <= cutoff ? 'none' : '';
-    });
-  }
-  if (scroll._hdrBlock) scroll.removeEventListener('scroll', scroll._hdrBlock);
-  scroll._hdrBlock = update;
-  scroll.addEventListener('scroll', update, { passive: true });
-  update();
 }
 
 function renderTableRow(scrollId, row, index, keys) {
