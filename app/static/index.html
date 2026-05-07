@@ -745,7 +745,7 @@
   [title] { cursor: help; }
 
   /* ── Animations ── */
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   .fade-in { animation: fadeIn .2s ease-out; }
 
   .blink { animation: blink 1s step-end infinite; }
@@ -818,7 +818,7 @@
     padding: 4px 6px;
     border-bottom: 2px solid var(--border2);
     position: sticky;
-    top: 34px;
+    top: 0;
     z-index: 9;
   }
   .col-filter-input {
@@ -1373,6 +1373,33 @@ function renderTable(d, scrollId, toolbarId, countId) {
   html += '</tbody></table>';
 
   scroll.innerHTML = `<div class="fade-in">${html}</div>`;
+  requestAnimationFrame(() => fixStickyHeader(scrollId));
+}
+
+function fixStickyHeader(scrollId) {
+  const scroll = document.getElementById(scrollId);
+  if (!scroll) return;
+  const table = scroll.querySelector('table');
+  if (!table) return;
+  const headerRow = table.querySelector('thead tr:first-child');
+  const filterRow = table.querySelector('thead tr.col-filter-row');
+  if (headerRow && filterRow) {
+    const h = headerRow.getBoundingClientRect().height;
+    filterRow.querySelectorAll('th').forEach(th => { th.style.top = h + 'px'; });
+  }
+  // Block pointer events on rows scrolled behind the sticky header
+  const thead = table.querySelector('thead');
+  if (!thead) return;
+  const update = () => {
+    const cutoff = scroll.getBoundingClientRect().top + thead.getBoundingClientRect().height;
+    scroll.querySelectorAll('tbody tr').forEach(tr => {
+      tr.style.pointerEvents = tr.getBoundingClientRect().bottom <= cutoff ? 'none' : '';
+    });
+  };
+  update();
+  if (scroll._stickyCleanup) scroll._stickyCleanup();
+  scroll.addEventListener('scroll', update, { passive: true });
+  scroll._stickyCleanup = () => scroll.removeEventListener('scroll', update);
 }
 
 function renderTableRow(scrollId, row, index, keys) {
