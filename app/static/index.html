@@ -1362,7 +1362,7 @@ function renderTable(d, scrollId, toolbarId, countId) {
   });
   html += `</tr><tr class="col-filter-row" onclick="event.stopPropagation()">`;
   keys.forEach(k => {
-    html += `<th><input class="col-filter-input" placeholder="▼ filter" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"></th>`;
+    html += `<th><input class="col-filter-input" placeholder="▼ filter  !exclude" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"></th>`;
   });
   html += `</tr></thead><tbody>`;
 
@@ -1547,8 +1547,12 @@ function applyColFilters(scrollId) {
     if (!row) { tr.style.display = ''; return; }
     const show = Object.entries(filters).every(([col, q]) => {
       if (!q) return true;
+      const exclude = q.startsWith('!');
+      const term = exclude ? q.slice(1) : q;
+      if (!term) return true;
       const val = row[col];
-      return val !== null && val !== undefined && String(val).toLowerCase().includes(q);
+      const match = val !== null && val !== undefined && String(val).toLowerCase().includes(term);
+      return exclude ? !match : match;
     });
     tr.style.display = show ? '' : 'none';
   });
