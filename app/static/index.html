@@ -1939,17 +1939,19 @@ async function showObjectDetails(tableId, rowIndex) {
   let lookupSid  = null;
   let lookupType = null;  // neo4j label to filter on
 
-  // Column name → Neo4j label (static, unambiguous columns)
+  // Static column → Neo4j label (non-domain object columns — high priority)
   const colTypeMap = {
     'user': 'User', 'upn': 'User', 'samaccount': 'User', 'domainadmin': 'User', 'targetuser': 'User',
     'computer': 'Computer', 'dns_name': 'Computer', 'dnsname': 'Computer', 'sqlserver': 'Computer', 'targetcomputer': 'Computer',
     'group': 'Group', 'group_name': 'Group', 'targetgroup': 'Group',
-    'domain': 'Domain', 'trustedby': 'Domain', 'targetdomain': 'Domain', 'sourcedomain': 'Domain', 'userdomain': 'Domain', 'groupdomain': 'Domain',
     'template': 'Certtemplates', 'certauthority': 'Enterprisecas',
     'gpo': 'GPO', 'ou': 'OU', 'linkedou': 'OU',
   };
 
-  // Dynamic pairs: column whose value is a name → sibling column that holds the type label
+  // Domain columns — low priority, only used as fallback when nothing else matches
+  const domainCols = new Set(['domain','trustedby','targetdomain','sourcedomain','userdomain','groupdomain']);
+
+  // Dynamic pairs: generic name column → sibling column that holds the Neo4j label
   const dynamicPairs = {
     'name': 'type', 'principal': 'type', 'controller': 'controllertype',
     'source': 'srctype', 'target': 'targettype', 'hvt': 'hvttype',
@@ -1959,39 +1961,62 @@ async function showObjectDetails(tableId, rowIndex) {
   // Normalised row for fast sibling lookup
   const rowLower = Object.fromEntries(Object.entries(objectData).map(([k,v]) => [k.toLowerCase(), v]));
 
-  // First pass: look for SID in any value
+  // Pass 1: SID in any value
   for (const v of Object.values(objectData)) {
-    if (v && typeof v === 'string' && v.startsWith('S-1-5-')) {
-      lookupSid = v;
-      break;
-    }
+    if (v && typeof v === 'string' && v.startsWith('S-1-5-')) { lookupSid = v; break; }
   }
 
-  // Second pass: find an object name + infer its Neo4j label
+  // Pass 2: explicit static-typed columns (User/Computer/Group/GPO/etc.) — highest priority
   if (!lookupSid) {
     for (const [k, v] of Object.entries(objectData)) {
       if (!v || typeof v !== 'string') continue;
-      const kl = k.toLowerCase();
-      let inferredType = colTypeMap[kl] || null;
-
-      // Dynamic resolution — use sibling Type column when present
-      if (!inferredType && dynamicPairs[kl]) {
-        const sibVal = rowLower[dynamicPairs[kl]];
-        if (sibVal && typeof sibVal === 'string') inferredType = sibVal;
-      }
-
-      // UPN-style: NAME@DOMAIN.TLD
+      const staticType = colTypeMap[k.toLowerCase()];
+      if (!staticType) continue;
       if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
-        lookupName = v;
-        lookupType = inferredType;
-        break;
+        lookupName = v; lookupType = staticType; break;
       }
-      // FQDN-style: HOSTNAME.DOMAIN.TLD (computer) or DOMAIN.TLD (domain), no @
+      if (!v.includes('@') && v.includes('.') && !v.startsWith('{') && staticType === 'Computer') {
+        lookupName = v; lookupType = 'Computer'; break;
+      }
+    }
+  }
+
+  // Pass 3: dynamic type resolution (Name/Principal/Controller/etc. with sibling Type column)
+  if (!lookupSid && !lookupName) {
+    for (const [k, v] of Object.entries(objectData)) {
+      if (!v || typeof v !== 'string') continue;
+      const kl = k.toLowerCase();
+      if (!dynamicPairs[kl]) continue;
+      const sibVal = rowLower[dynamicPairs[kl]];
+      if (!sibVal || typeof sibVal !== 'string') continue;
+      const inferredType = sibVal;
+      if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
+        lookupName = v; lookupType = inferredType; break;
+      }
       if (!v.includes('@') && v.includes('.') && !v.startsWith('{') &&
           (inferredType === 'Computer' || inferredType === 'Domain')) {
-        lookupName = v;
-        lookupType = inferredType;
-        break;
+        lookupName = v; lookupType = inferredType; break;
+      }
+    }
+  }
+
+  // Pass 4: UPN-style with no type (catch-all for names like USER@DOMAIN)
+  if (!lookupSid && !lookupName) {
+    for (const [k, v] of Object.entries(objectData)) {
+      if (!v || typeof v !== 'string') continue;
+      if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
+        lookupName = v; lookupType = null; break;
+      }
+    }
+  }
+
+  // Pass 5: Domain FQDN — only fires when row has nothing else clickable (e.g. Domains tab)
+  if (!lookupSid && !lookupName) {
+    for (const [k, v] of Object.entries(objectData)) {
+      if (!v || typeof v !== 'string') continue;
+      if (!domainCols.has(k.toLowerCase())) continue;
+      if (!v.includes('@') && v.includes('.') && !v.startsWith('{')) {
+        lookupName = v; lookupType = 'Domain'; break;
       }
     }
   }
