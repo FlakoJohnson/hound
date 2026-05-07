@@ -1939,16 +1939,25 @@ async function showObjectDetails(tableId, rowIndex) {
   let lookupSid  = null;
   let lookupType = null;  // neo4j label to filter on
 
-  // Column name → Neo4j label mapping
+  // Column name → Neo4j label (static, unambiguous columns)
   const colTypeMap = {
-    'user': 'User', 'upn': 'User', 'samaccount': 'User', 'domainadmin': 'User',
-    'ownednode': 'User',
-    'computer': 'Computer', 'dns_name': 'Computer', 'dnsname': 'Computer',
-    'sqlserver': 'Computer',
+    'user': 'User', 'upn': 'User', 'samaccount': 'User', 'domainadmin': 'User', 'targetuser': 'User',
+    'computer': 'Computer', 'dns_name': 'Computer', 'dnsname': 'Computer', 'sqlserver': 'Computer', 'targetcomputer': 'Computer',
     'group': 'Group', 'group_name': 'Group', 'targetgroup': 'Group',
-    'template': 'Certtemplates',
-    'gpo': 'GPO',
+    'domain': 'Domain', 'trustedby': 'Domain', 'targetdomain': 'Domain', 'sourcedomain': 'Domain', 'userdomain': 'Domain', 'groupdomain': 'Domain',
+    'template': 'Certtemplates', 'certauthority': 'Enterprisecas',
+    'gpo': 'GPO', 'ou': 'OU', 'linkedou': 'OU',
   };
+
+  // Dynamic pairs: column whose value is a name → sibling column that holds the type label
+  const dynamicPairs = {
+    'name': 'type', 'principal': 'type', 'controller': 'controllertype',
+    'source': 'srctype', 'target': 'targettype', 'hvt': 'hvttype',
+    'ownednode': 'type', 'delegateprincipal': 'type',
+  };
+
+  // Normalised row for fast sibling lookup
+  const rowLower = Object.fromEntries(Object.entries(objectData).map(([k,v]) => [k.toLowerCase(), v]));
 
   // First pass: look for SID in any value
   for (const v of Object.values(objectData)) {
@@ -1958,21 +1967,30 @@ async function showObjectDetails(tableId, rowIndex) {
     }
   }
 
-  // Second pass: look for UPN-style name or FQDN (computer), tracking which column it came from
+  // Second pass: find an object name + infer its Neo4j label
   if (!lookupSid) {
     for (const [k, v] of Object.entries(objectData)) {
       if (!v || typeof v !== 'string') continue;
-      const inferredType = colTypeMap[k.toLowerCase()] || null;
+      const kl = k.toLowerCase();
+      let inferredType = colTypeMap[kl] || null;
+
+      // Dynamic resolution — use sibling Type column when present
+      if (!inferredType && dynamicPairs[kl]) {
+        const sibVal = rowLower[dynamicPairs[kl]];
+        if (sibVal && typeof sibVal === 'string') inferredType = sibVal;
+      }
+
       // UPN-style: NAME@DOMAIN.TLD
       if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
         lookupName = v;
         lookupType = inferredType;
         break;
       }
-      // FQDN-style: HOSTNAME.DOMAIN.TLD (computer names, no @)
-      if (!v.includes('@') && v.includes('.') && !v.startsWith('{') && inferredType === 'Computer') {
+      // FQDN-style: HOSTNAME.DOMAIN.TLD (computer) or DOMAIN.TLD (domain), no @
+      if (!v.includes('@') && v.includes('.') && !v.startsWith('{') &&
+          (inferredType === 'Computer' || inferredType === 'Domain')) {
         lookupName = v;
-        lookupType = 'Computer';
+        lookupType = inferredType;
         break;
       }
     }
