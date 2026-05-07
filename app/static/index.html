@@ -1975,13 +1975,21 @@ async function showObjectDetails(tableId, rowIndex) {
     }
   }
 
-  // Second pass: look for UPN-style name, tracking which column it came from
+  // Second pass: look for UPN-style name or FQDN (computer), tracking which column it came from
   if (!lookupSid) {
     for (const [k, v] of Object.entries(objectData)) {
       if (!v || typeof v !== 'string') continue;
+      const inferredType = colTypeMap[k.toLowerCase()] || null;
+      // UPN-style: NAME@DOMAIN.TLD
       if (v.includes('@') && v.includes('.') && !v.startsWith('{')) {
         lookupName = v;
-        lookupType = colTypeMap[k.toLowerCase()] || null;
+        lookupType = inferredType;
+        break;
+      }
+      // FQDN-style: HOSTNAME.DOMAIN.TLD (computer names, no @)
+      if (!v.includes('@') && v.includes('.') && !v.startsWith('{') && inferredType === 'Computer') {
+        lookupName = v;
+        lookupType = 'Computer';
         break;
       }
     }
