@@ -15,10 +15,6 @@ ORDER BY Domain, User"""
             "description": "All Domain Controllers",
             "cypher": """MATCH (c:Computer)
 WHERE c.isdc = true
-   OR EXISTS {
-     MATCH (c)-[:MemberOf*1..]->(g:Group)
-     WHERE g.name =~ '(?i)domain controllers@.*'
-   }
 RETURN c.name AS Computer, c.domain AS Domain, c.operatingsystem AS OS, c.enabled AS Enabled
 ORDER BY Domain, Computer"""
         },
