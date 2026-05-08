@@ -1455,6 +1455,14 @@ function renderCell(key, val) {
     return `<span style="color:var(--text)">${escHtml(v)}${copyBtn}</span>`;
   }
 
+  // OU — store full DN for filtering, display immediate OU name only
+  if (k === 'ou') {
+    if (!v) return '<span style="color:var(--text3)">—</span>';
+    const parts = v.split(',').filter(p => p.trim().toUpperCase().startsWith('OU='));
+    const display = parts.length ? parts[0].trim().slice(3) : v;
+    return `<span title="${escHtml(v)}" style="color:var(--text2)">${escHtml(display)}</span>`;
+  }
+
   // Domain
   if (k === 'domain' || k === 'targetdomain' || k === 'sourcedomain') {
     const copyBtn = shouldShowCopyButton(key, val) ?
@@ -1881,8 +1889,8 @@ async function showObjectStats(objectType) {
       : `MATCH (n:User) WHERE n.name IS NOT NULL RETURN n.name AS UPN, n.domain AS Domain, n.enabled AS Enabled, n.admincount AS AdminCount, n.lastlogon AS LastLogon, n.samaccountname AS SAMAccount ORDER BY n.admincount DESC, UPN`;
   } else if (objectType === 'Computer') {
     cypher = hasDomain
-      ? `MATCH (n:Computer) WHERE n.name IS NOT NULL AND n.domain = $domain RETURN n.name AS DNS_Name, n.domain AS Domain, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`
-      : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.domain AS Domain, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
+      ? `MATCH (n:Computer) WHERE n.name IS NOT NULL AND n.domain = $domain RETURN n.name AS DNS_Name, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`
+      : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
   } else if (objectType === 'Group') {
     cypher = hasDomain
       ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
