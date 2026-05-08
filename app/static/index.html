@@ -974,6 +974,7 @@
         <div class="spacer"></div>
         <button class="btn btn-cyan"  onclick="exportCSV()">↓ CSV</button>
         <button class="btn btn-green" onclick="copyTable()">⎘ COPY TABLE</button>
+        <button class="btn btn-cyan"  onclick="copyMarkdown()">⎘ MARKDOWN</button>
       </div>
       <div class="results-scroll" id="resultsScroll">
         <div class="empty-state" id="emptyState">
@@ -1375,7 +1376,7 @@ function renderTable(d, scrollId, toolbarId, countId) {
 }
 
 function renderTableRow(scrollId, row, index, keys) {
-  let html = `<tr onclick="showObjectDetails('${scrollId}',${index})" oncontextmenu="showCtxMenu(event,'${scrollId}',${index})" style="cursor:pointer;" title="Click for details / Right-click for actions">`;
+  let html = `<tr data-ridx="${index}" onclick="showObjectDetails('${scrollId}',${index})" oncontextmenu="showCtxMenu(event,'${scrollId}',${index})" style="cursor:pointer;" title="Click for details / Right-click for actions">`;
   keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
   return html + '</tr>';
 }
@@ -1711,18 +1712,50 @@ function doExportCSV(d, name) {
   toast('CSV exported', 'ok');
 }
 
+function getVisibleRows(scrollId) {
+  const keys = window._tableKeys?.[scrollId];
+  const allRows = window._tableRows?.[scrollId];
+  if (!keys || !allRows) return null;
+  const tbl = document.getElementById(`${scrollId}-table`);
+  if (!tbl) return null;
+  const rows = [];
+  tbl.querySelectorAll('tbody tr').forEach(tr => {
+    if (tr.style.display === 'none') return;
+    const idx = parseInt(tr.dataset.ridx);
+    if (!isNaN(idx) && allRows[idx]) rows.push(allRows[idx]);
+  });
+  return { keys, rows };
+}
+
+function cellText(val) {
+  return Array.isArray(val) ? val.join(';') : String(val ?? '');
+}
+
 function copyTable() {
-  if (!lastResultData?.data?.length) return toast('No data to copy', 'err');
-  const keys = lastResultData.keys;
-  const lines = [keys.join('\t')];
-  lastResultData.data.forEach(row => {
-    lines.push(keys.map(k => {
-      const v = row[k];
-      return Array.isArray(v) ? v.join(';') : String(v ?? '');
-    }).join('\t'));
+  const d = getVisibleRows('resultsScroll');
+  if (!d?.rows?.length) return toast('No data to copy', 'err');
+  const lines = [d.keys.join('\t')];
+  d.rows.forEach(row => lines.push(d.keys.map(k => cellText(row[k])).join('\t')));
+  copyToClipboard(lines.join('\n'));
+  toast(`Copied ${d.rows.length} rows`, 'ok');
+}
+
+function copyMarkdown() {
+  const d = getVisibleRows('resultsScroll');
+  if (!d?.rows?.length) return toast('No data to copy', 'err');
+  const widths = d.keys.map(k => {
+    const maxVal = Math.max(...d.rows.map(r => cellText(r[k]).length));
+    return Math.max(k.length, maxVal, 3);
+  });
+  const pad = (s, w) => s + ' '.repeat(Math.max(0, w - s.length));
+  const header = '| ' + d.keys.map((k, i) => pad(k, widths[i])).join(' | ') + ' |';
+  const sep    = '| ' + widths.map(w => '-'.repeat(w)).join(' | ') + ' |';
+  const lines  = [header, sep];
+  d.rows.forEach(row => {
+    lines.push('| ' + d.keys.map((k, i) => pad(cellText(row[k]), widths[i])).join(' | ') + ' |');
   });
   copyToClipboard(lines.join('\n'));
-  toast('Table copied to clipboard', 'ok');
+  toast(`Copied ${d.rows.length} rows as Markdown`, 'ok');
 }
 
 function copyQuery() {
