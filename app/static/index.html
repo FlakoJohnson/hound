@@ -404,11 +404,16 @@
   }
   .result-count span { color: var(--green); font-weight: bold; }
 
+  .search-box-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
   .search-box {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 3px;
-    padding: 5px 10px;
+    padding: 5px 26px 5px 10px;
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text);
@@ -418,6 +423,20 @@
   }
   .search-box:focus { border-color: var(--cyan); }
   .search-box::placeholder { color: var(--text3); }
+  .search-box-clear {
+    position: absolute;
+    right: 6px;
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 1px;
+    display: none;
+  }
+  .search-box-clear:hover { color: var(--text); }
+  .search-box:not(:placeholder-shown) ~ .search-box-clear { display: block; }
 
   .results-scroll { flex: 1; overflow: auto; }
   .results-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -820,6 +839,11 @@
     padding: 4px 6px;
     border-bottom: 2px solid var(--border2);
   }
+  .col-filter-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
   .col-filter-input {
     width: 100%;
     background: var(--bg);
@@ -828,7 +852,7 @@
     color: var(--text2);
     font-family: var(--font-mono);
     font-size: 10px;
-    padding: 3px 6px;
+    padding: 3px 20px 3px 6px;
     outline: none;
     transition: border-color .15s, color .15s;
     min-width: 60px;
@@ -839,6 +863,20 @@
     box-shadow: 0 0 0 1px rgba(100,255,218,.15);
   }
   .col-filter-input::placeholder { color: var(--text3); font-size: 9px; }
+  .col-filter-clear {
+    position: absolute;
+    right: 4px;
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 1px;
+    display: none;
+  }
+  .col-filter-clear:hover { color: var(--text); }
+  .col-filter-input:not(:placeholder-shown) ~ .col-filter-clear { display: block; }
 
   /* ── Context Menu ── */
   #ctxMenu {
@@ -970,7 +1008,7 @@
     <div class="panel-results" id="view-results">
       <div class="results-toolbar" id="resultsToolbar" style="display:none">
         <div class="result-count" id="resultCount"></div>
-        <input class="search-box" id="filterBox" placeholder="filter results..." oninput="filterTable(this.value)">
+        <div class="search-box-wrap"><input class="search-box" id="filterBox" placeholder="filter results..." oninput="filterTable(this.value)"><button class="search-box-clear" onclick="clearSearchBox('filterBox',filterTable)">×</button></div>
         <div class="spacer"></div>
         <button class="btn btn-cyan"  onclick="exportCSV()">↓ CSV</button>
         <button class="btn btn-green" onclick="copyTable()">⎘ COPY TABLE</button>
@@ -1001,7 +1039,7 @@
       </div>
       <div class="results-toolbar" id="customToolbar" style="display:none">
         <div class="result-count" id="customCount"></div>
-        <input class="search-box" id="customFilter" placeholder="filter results..." oninput="filterCustomTable(this.value)">
+        <div class="search-box-wrap"><input class="search-box" id="customFilter" placeholder="filter results..." oninput="filterCustomTable(this.value)"><button class="search-box-clear" onclick="clearSearchBox('customFilter',filterCustomTable)">×</button></div>
         <div class="spacer"></div>
         <button class="btn btn-cyan"  onclick="exportCustomCSV()">↓ CSV</button>
       </div>
@@ -1363,7 +1401,7 @@ function renderTable(d, scrollId, toolbarId, countId) {
   });
   html += `</tr><tr class="col-filter-row" onclick="event.stopPropagation()">`;
   keys.forEach(k => {
-    html += `<th><input class="col-filter-input" placeholder="▼ filter  !exclude" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"></th>`;
+    html += `<th><div class="col-filter-wrap"><input class="col-filter-input" placeholder="▼ filter  !exclude" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"><button class="col-filter-clear" onclick="clearColFilter('${scrollId}',this,'${escForOnclick(k)}')">×</button></div></th>`;
   });
   html += `</tr></thead><tbody>`;
 
@@ -1542,6 +1580,18 @@ function colFilter(scrollId, inputEl, col) {
   window._colFilters[scrollId] = window._colFilters[scrollId] || {};
   window._colFilters[scrollId][col] = inputEl.value.toLowerCase();
   applyColFilters(scrollId);
+}
+
+function clearColFilter(scrollId, btn, col) {
+  const input = btn.previousElementSibling;
+  input.value = '';
+  colFilter(scrollId, input, col);
+}
+
+function clearSearchBox(id, filterFn) {
+  const input = document.getElementById(id);
+  input.value = '';
+  filterFn('');
 }
 
 function applyColFilters(scrollId) {
