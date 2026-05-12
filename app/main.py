@@ -151,6 +151,24 @@ def upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/notes', methods=['POST'])
+@require_token
+def save_note():
+    data = request.json or {}
+    objectid = data.get('objectid', '').strip()
+    text = data.get('text', '')
+    if not objectid:
+        return jsonify({'error': 'No objectid provided'}), 400
+    try:
+        with get_driver().session() as session:
+            session.run(
+                'MATCH (n) WHERE n.objectid = $oid SET n.hound_notes = $text',
+                oid=objectid, text=text
+            )
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/clear', methods=['POST'])
 @require_token
 def clear_db():

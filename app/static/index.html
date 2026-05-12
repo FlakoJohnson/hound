@@ -586,6 +586,22 @@
     color: var(--text2);
     transition: all 0.2s;
   }
+  .notes-input {
+    width: 100%;
+    min-height: 80px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px;
+    resize: vertical;
+    box-sizing: border-box;
+    border-radius: 2px;
+    margin-top: 4px;
+  }
+  .notes-input:focus { outline: none; border-color: var(--green); }
+  .notes-save { margin-top: 8px; font-size: 11px; }
   .details-close:hover {
     background: var(--bg3);
     color: var(--text);
@@ -2147,6 +2163,9 @@ async function showObjectDetails(tableId, rowIndex) {
   const displayName = lookupName || lookupSid || 'Row';
   title.textContent = `${label} — ${displayName.split('@')[0]}`;
 
+  const resolvedObjectId = nodeData?.props?.objectid || lookupSid || '';
+  document.getElementById('detailsOverlay').dataset.objectid = resolvedObjectId;
+
   renderObjectDetails(nodeData?.props || null, objectData, groups);
 }
 
@@ -2154,6 +2173,15 @@ async function showObjectDetails(tableId, rowIndex) {
 function renderObjectDetails(fullProps, rowData, groups = []) {
   const content = document.getElementById('detailsContent');
   let html = '';
+
+  // Notes
+  const existingNotes = escHtml(fullProps?.hound_notes || '');
+  const hasObjectId = !!document.getElementById('detailsOverlay').dataset.objectid;
+  html += `<div class="details-section">
+    <h4>Notes</h4>
+    <textarea class="notes-input" id="notesInput" placeholder="Add engagement notes for this object..." spellcheck="false">${existingNotes}</textarea>
+    <button class="btn btn-green notes-save" onclick="saveNote(this)" ${hasObjectId ? '' : 'disabled title="No object ID — cannot save"'}>SAVE</button>
+  </div>`;
 
   // Group Memberships
   if (groups.length > 0) {
@@ -2213,6 +2241,27 @@ function renderObjectDetails(fullProps, rowData, groups = []) {
   html += '</div>';
 
   content.innerHTML = html || '<div style="color:var(--text3);padding:20px">No data available</div>';
+}
+
+async function saveNote(btn) {
+  const objectid = document.getElementById('detailsOverlay').dataset.objectid;
+  const text = document.getElementById('notesInput').value;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  try {
+    await apiFetch('/api/notes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({objectid, text})
+    });
+    btn.textContent = '✓ SAVED';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; btn.disabled = false; }, 2000);
+  } catch(e) {
+    toast('Failed to save note', 'err');
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 function closeDetails(event) {
