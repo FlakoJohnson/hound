@@ -976,6 +976,70 @@
   .ctx-item.danger:hover { background: rgba(244,63,94,.1); color: var(--red); }
   .ctx-item.good { color: var(--green); }
   .ctx-item.good:hover { background: rgba(163,230,53,.08); color: var(--green); }
+
+  /* ── Users Management Overlay ── */
+  #usersOverlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9000;
+    animation: fadeIn .2s ease;
+  }
+  #usersOverlay.visible { display: flex; }
+  .users-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 90%;
+    max-width: 720px;
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    animation: slideIn .25s ease;
+  }
+  .users-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .users-table th {
+    text-align: left; padding: 8px 12px; color: var(--cyan);
+    font-family: var(--font-disp); font-size: 10px; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    border-bottom: 1px solid var(--border); background: var(--bg3);
+  }
+  .users-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .users-table tr:hover td { background: rgba(100,255,218,.03); }
+  .create-form {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .create-form.visible { display: block; }
+  .create-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .form-field { display: flex; flex-direction: column; gap: 4px; }
+  .form-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .08em; }
+  .form-input {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 6px 9px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s;
+  }
+  .form-input:focus { border-color: var(--cyan); }
+  .role-badge-admin { color: var(--red); }
+  .role-badge-user  { color: var(--green2); }
 </style>
 </head>
 <body>
@@ -1003,6 +1067,7 @@
     <button class="btn btn-orange" onclick="showTab('upload')">⬆ IMPORT</button>
     <button class="btn btn-red"    onclick="clearDB()">⚡ CLEAR DB</button>
     <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
+    <button class="btn btn-cyan"   id="usersBtn" onclick="openUsers()" style="display:none">⚙ USERS</button>
     <button class="btn" id="logoutBtn" onclick="logout()" style="display:none;border-color:var(--border2);color:var(--text3)">⏻ LOGOUT</button>
   </div>
 </header>
@@ -1201,6 +1266,15 @@ async function init() {
     const hd = await h.json();
     if (hd.auth_required && !hd.authenticated) { showLoginOverlay(); return; }
     document.getElementById('logoutBtn').style.display = hd.auth_required ? '' : 'none';
+    if (hd.auth_required) {
+      try {
+        const wr = await fetch('/api/auth/whoami', { credentials: 'same-origin' });
+        const wd = await wr.json();
+        window._currentUserId   = wd.id;
+        window._currentUserRole = wd.role;
+        document.getElementById('usersBtn').style.display = wd.role === 'admin' ? '' : 'none';
+      } catch(e) {}
+    }
   } catch(e) {}
   await Promise.all([loadQueries(), checkHealth()]);
   refreshStats();
@@ -2336,6 +2410,137 @@ function closeDetails(event) {
   }
 }
 
+// ── User Management ────────────────────────────────────────────────────────
+let _usersList = [];
+
+function openUsers() {
+  document.getElementById('usersOverlay').classList.add('visible');
+  loadUsers();
+}
+
+function closeUsers() {
+  document.getElementById('usersOverlay').classList.remove('visible');
+  document.getElementById('createUserForm').classList.remove('visible');
+}
+
+async function loadUsers() {
+  try {
+    const r = await apiFetch('/api/users');
+    const d = await r.json();
+    _usersList = d.users || [];
+    renderUsersTable(_usersList);
+  } catch(e) {
+    document.getElementById('usersTableWrap').innerHTML =
+      `<div style="color:var(--red);padding:12px">Failed to load users</div>`;
+  }
+}
+
+function renderUsersTable(users) {
+  if (!users.length) {
+    document.getElementById('usersTableWrap').innerHTML =
+      '<div style="color:var(--text3);padding:12px;text-align:center">No users found</div>';
+    return;
+  }
+  const me = window._currentUserId || '';
+  const rows = users.map(u => {
+    const isMe = u.id === me;
+    const ts = u.last_login_at
+      ? new Date(u.last_login_at * 1000).toISOString().slice(0,16).replace('T',' ')
+      : '<span style="color:var(--text3)">Never</span>';
+    const roleClass = u.role === 'admin' ? 'role-badge-admin' : 'role-badge-user';
+    const statusBadge = u.disabled
+      ? '<span class="badge badge-true" style="font-size:9px">DISABLED</span>'
+      : '<span class="badge badge-false" style="font-size:9px">ACTIVE</span>';
+    const actions = isMe
+      ? '<span style="color:var(--text3);font-size:10px">(you)</span>'
+      : `<button onclick="toggleUserDisabled('${u.id}',${u.disabled ? 1 : 0})"
+           class="btn" style="font-size:9px;padding:2px 7px;border-color:var(--border2);color:var(--text3);margin-right:4px">
+           ${u.disabled ? 'ENABLE' : 'DISABLE'}
+         </button>
+         <button onclick="confirmDeleteUser('${u.id}','${escForOnclick(u.username)}')"
+           class="btn btn-red" style="font-size:9px;padding:2px 7px">DEL</button>`;
+    return `<tr>
+      <td><span style="color:var(--text)">${escHtml(u.username)}</span></td>
+      <td><span class="${roleClass}" style="font-size:11px;font-weight:600">${u.role}</span></td>
+      <td>${statusBadge}</td>
+      <td style="color:var(--text2);font-size:11px">${ts}</td>
+      <td style="text-align:right;white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('usersTableWrap').innerHTML = `
+    <table class="users-table">
+      <thead><tr>
+        <th>Username</th><th>Role</th><th>Status</th><th>Last Login</th>
+        <th style="text-align:right">Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function toggleCreateForm() {
+  const form = document.getElementById('createUserForm');
+  form.classList.toggle('visible');
+  if (form.classList.contains('visible')) {
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('newRole').value = 'user';
+    document.getElementById('createUserError').textContent = '';
+    document.getElementById('newUsername').focus();
+  }
+}
+
+async function submitCreateUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const role     = document.getElementById('newRole').value;
+  const errEl    = document.getElementById('createUserError');
+  const btn      = document.getElementById('createUserBtn');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = 'Username and password required'; return; }
+  btn.disabled = true; btn.textContent = 'CREATING...';
+  try {
+    const r = await apiFetch('/api/users', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password, role}),
+    });
+    const d = await r.json();
+    if (d.error) { errEl.textContent = d.error; return; }
+    toggleCreateForm();
+    await loadUsers();
+    toast(`User '${username}' created`, 'ok');
+  } catch(e) {
+    errEl.textContent = 'Request failed';
+  } finally {
+    btn.disabled = false; btn.textContent = 'CREATE';
+  }
+}
+
+async function toggleUserDisabled(uid, currentlyDisabled) {
+  try {
+    await apiFetch(`/api/users/${uid}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({disabled: !currentlyDisabled}),
+    });
+    await loadUsers();
+  } catch(e) { toast('Update failed', 'err'); }
+}
+
+function confirmDeleteUser(uid, username) {
+  if (!confirm(`Delete user '${username}'? This cannot be undone.`)) return;
+  deleteUser(uid, username);
+}
+
+async function deleteUser(uid, username) {
+  try {
+    await apiFetch(`/api/users/${uid}`, { method: 'DELETE' });
+    await loadUsers();
+    toast(`User '${username}' deleted`, 'ok');
+  } catch(e) { toast('Delete failed', 'err'); }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 init();
 </script>
@@ -2357,6 +2562,58 @@ init();
     </div>
     <div class="login-error" id="loginError"></div>
     <button id="loginBtn" class="btn btn-cyan" onclick="submitLogin()">LOGIN</button>
+  </div>
+</div>
+
+<!-- Users Management Overlay -->
+<div id="usersOverlay" onclick="if(event.target===this)closeUsers()">
+  <div class="users-panel" onclick="event.stopPropagation()">
+    <div class="details-header">
+      <div class="details-title">⚙ USER MANAGEMENT</div>
+      <div class="details-close" onclick="closeUsers()">✕</div>
+    </div>
+    <div class="details-content">
+
+      <!-- Create user form -->
+      <div id="createUserForm" class="create-form">
+        <h4 style="margin:0 0 12px;color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:1px">New User</h4>
+        <div class="create-form-grid">
+          <div class="form-field">
+            <label class="form-label">Username</label>
+            <input id="newUsername" class="form-input" type="text" autocomplete="off"
+              onkeydown="if(event.key==='Enter')document.getElementById('newPassword').focus()">
+          </div>
+          <div class="form-field">
+            <label class="form-label">Password</label>
+            <input id="newPassword" class="form-input" type="password" autocomplete="new-password"
+              onkeydown="if(event.key==='Enter')submitCreateUser()">
+          </div>
+          <div class="form-field">
+            <label class="form-label">Role</label>
+            <select id="newRole" class="form-input" style="cursor:pointer">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="createUserBtn" class="btn btn-green" onclick="submitCreateUser()">CREATE</button>
+          <button class="btn" onclick="toggleCreateForm()"
+            style="border-color:var(--border2);color:var(--text3)">CANCEL</button>
+          <span id="createUserError" style="font-size:11px;color:var(--red);margin-left:4px"></span>
+        </div>
+      </div>
+
+      <!-- Users list -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">Users</span>
+        <button class="btn btn-cyan" onclick="toggleCreateForm()" style="font-size:10px;padding:4px 12px">+ NEW USER</button>
+      </div>
+      <div id="usersTableWrap">
+        <div style="color:var(--text3);padding:16px;text-align:center">Loading...</div>
+      </div>
+
+    </div>
   </div>
 </div>
 
