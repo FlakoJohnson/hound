@@ -35,6 +35,9 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASS=${NEO4J_PASS:-bloodhound}
       - HOUND_TOKEN=${HOUND_TOKEN:-}
+      - HOUND_USER=${HOUND_USER:-admin}
+      - HOUND_PASS=${HOUND_PASS:-}
+      - SECRET_KEY=${SECRET_KEY:-}
     ports:
       - "8080:5000"
     depends_on:

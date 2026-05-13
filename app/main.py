@@ -1,8 +1,9 @@
 import os
 import time
 import logging
+import secrets
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable, AuthError
@@ -14,12 +15,21 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='static')
 app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512MB max upload
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.json.sort_keys = False
 
-CORS(app)
+CORS(app, supports_credentials=True)
 
-# Optional static token auth — set HOUND_TOKEN env var to enable
-HOUND_TOKEN = os.environ.get('HOUND_TOKEN', '').strip()
+# Auth config — set HOUND_PASS to enable username/password login
+HOUND_USER  = os.environ.get('HOUND_USER',  'admin').strip()
+HOUND_PASS  = os.environ.get('HOUND_PASS',  '').strip()
+HOUND_TOKEN = os.environ.get('HOUND_TOKEN', '').strip()  # legacy token auth, still supported
+SECRET_KEY  = os.environ.get('SECRET_KEY',  secrets.token_hex(32))
+
+app.secret_key = SECRET_KEY
+
+AUTH_REQUIRED = bool(HOUND_PASS or HOUND_TOKEN)
 
 # Cypher operations that can never be run via the query API
 _BLOCKED_OPS = ['DETACH DELETE', 'DROP ']
@@ -35,12 +45,23 @@ def add_security_headers(response):
     return response
 
 
-def require_token(f):
+def _is_authenticated():
+    if not AUTH_REQUIRED:
+        return True
+    # Session cookie login
+    if session.get('authenticated'):
+        return True
+    # Legacy token header (backward compat for API clients)
+    if HOUND_TOKEN and request.headers.get('X-Hound-Token', '') == HOUND_TOKEN:
+        return True
+    return False
+
+
+def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if HOUND_TOKEN:
-            if request.headers.get('X-Hound-Token', '') != HOUND_TOKEN:
-                return jsonify({'error': 'Unauthorized'}), 401
+        if not _is_authenticated():
+            return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -72,6 +93,28 @@ def wait_for_neo4j(retries=30, delay=3):
     return False
 
 
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    if not HOUND_PASS:
+        return jsonify({'error': 'Password auth not configured'}), 400
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    if username == HOUND_USER and password == HOUND_PASS:
+        session['authenticated'] = True
+        session.permanent = False
+        return jsonify({'success': True, 'username': username})
+    return jsonify({'error': 'Invalid credentials'}), 401
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({'success': True})
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -80,21 +123,27 @@ def index():
 
 @app.route('/api/health')
 def health():
-    # Intentionally unprotected — used to check connectivity and whether auth is required
     try:
         with get_driver().session() as s:
             s.run("RETURN 1")
-        return jsonify({'status': 'ok', 'neo4j': 'connected', 'auth': bool(HOUND_TOKEN)})
+        return jsonify({
+            'status': 'ok',
+            'neo4j': 'connected',
+            'auth_required': AUTH_REQUIRED,
+            'authenticated': _is_authenticated(),
+            # legacy key — kept for backward compat
+            'auth': bool(HOUND_TOKEN),
+        })
     except Exception as e:
-        return jsonify({'status': 'error', 'neo4j': str(e)}), 503
+        return jsonify({'status': 'error', 'neo4j': str(e), 'auth_required': AUTH_REQUIRED}), 503
 
 @app.route('/api/queries')
-@require_token
+@require_auth
 def get_queries():
     return jsonify(QUERIES)
 
 @app.route('/api/stats')
-@require_token
+@require_auth
 def get_stats():
     try:
         imp = BloodHoundImporter(get_driver())
@@ -103,7 +152,7 @@ def get_stats():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/run', methods=['POST'])
-@require_token
+@require_auth
 def run_query():
     data = request.json or {}
     cypher = data.get('cypher', '').strip()
@@ -120,8 +169,8 @@ def run_query():
             return jsonify({'success': False, 'error': f'Operation not permitted: {op}'}), 403
 
     try:
-        with get_driver().session() as session:
-            result = session.run(cypher, parameters=params)
+        with get_driver().session() as neo4j_session:
+            result = neo4j_session.run(cypher, parameters=params)
             keys = list(result.keys())
             records = []
             for record in result:
@@ -140,7 +189,7 @@ def run_query():
         return jsonify({'success': False, 'error': str(e)}), 200
 
 @app.route('/api/upload', methods=['POST'])
-@require_token
+@require_auth
 def upload():
     f = request.files.get('file')
     if not f:
@@ -153,7 +202,7 @@ def upload():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/notes', methods=['POST'])
-@require_token
+@require_auth
 def save_note():
     data = request.json or {}
     objectid = data.get('objectid', '').strip()
@@ -161,8 +210,8 @@ def save_note():
     if not objectid:
         return jsonify({'error': 'No objectid provided'}), 400
     try:
-        with get_driver().session() as session:
-            session.run(
+        with get_driver().session() as neo4j_session:
+            neo4j_session.run(
                 'MATCH (n) WHERE n.objectid = $oid SET n.hound_notes = $text',
                 oid=objectid, text=text
             )
@@ -171,7 +220,7 @@ def save_note():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/clear', methods=['POST'])
-@require_token
+@require_auth
 def clear_db():
     try:
         imp = BloodHoundImporter(get_driver())

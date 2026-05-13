@@ -807,15 +807,54 @@
   .neo-dot.loading { background: var(--yellow); animation: blink 1s step-end infinite; }
 
   /* ── Token Auth Overlay ── */
-  #tokenOverlay {
+  #loginOverlay {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.92);
+    background: rgba(0,0,0,0.95);
     display: none;
     align-items: center;
     justify-content: center;
     z-index: 99999;
   }
-  #tokenOverlay.visible { display: flex; }
+  #loginOverlay.visible { display: flex; }
+  .login-box {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 36px 44px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 360px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.7);
+  }
+  .login-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.05em;
+    text-align: center;
+  }
+  .login-subtitle {
+    font-size: 11px;
+    color: var(--text3);
+    text-align: center;
+    margin-top: -10px;
+  }
+  .login-field { display: flex; flex-direction: column; gap: 5px; }
+  .login-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .login-input {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .login-input:focus { border-color: var(--cyan); }
+  .login-error { font-size: 11px; color: var(--red); text-align: center; min-height: 16px; }
   .token-box {
     background: var(--bg2);
     border: 1px solid var(--border2);
@@ -964,6 +1003,7 @@
     <button class="btn btn-orange" onclick="showTab('upload')">⬆ IMPORT</button>
     <button class="btn btn-red"    onclick="clearDB()">⚡ CLEAR DB</button>
     <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
+    <button class="btn" id="logoutBtn" onclick="logout()" style="display:none;border-color:var(--border2);color:var(--text3)">⏻ LOGOUT</button>
   </div>
 </header>
 
@@ -1096,30 +1136,56 @@
 
 <script>
 // ── Auth ───────────────────────────────────────────────────────────────────
-function getToken() { return sessionStorage.getItem('hound_token') || ''; }
-
 async function apiFetch(url, opts = {}) {
-  const token = getToken();
-  if (token) {
-    opts.headers = Object.assign({}, opts.headers || {}, {'X-Hound-Token': token});
-  }
+  opts.credentials = 'same-origin';
   const r = await fetch(url, opts);
-  if (r.status === 401) { showTokenOverlay(); throw new Error('Authentication required'); }
+  if (r.status === 401) { showLoginOverlay(); throw new Error('Authentication required'); }
   return r;
 }
 
-function showTokenOverlay() {
-  document.getElementById('tokenOverlay').classList.add('visible');
-  setTimeout(() => document.getElementById('tokenInput')?.focus(), 50);
+function showLoginOverlay() {
+  document.getElementById('loginOverlay').classList.add('visible');
+  document.getElementById('loginError').textContent = '';
+  setTimeout(() => document.getElementById('loginUsername')?.focus(), 50);
 }
 
-async function submitToken() {
-  const t = document.getElementById('tokenInput').value.trim();
-  if (!t) return;
-  sessionStorage.setItem('hound_token', t);
-  document.getElementById('tokenOverlay').classList.remove('visible');
-  document.getElementById('tokenInput').value = '';
-  await init();
+function hideLoginOverlay() {
+  document.getElementById('loginOverlay').classList.remove('visible');
+}
+
+async function submitLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+  if (!username || !password) { errEl.textContent = 'Username and password required'; return; }
+  btn.disabled = true;
+  btn.textContent = 'CONNECTING...';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (r.ok) {
+      document.getElementById('loginPassword').value = '';
+      hideLoginOverlay();
+      await init();
+    } else {
+      const d = await r.json();
+      errEl.textContent = d.error || 'Invalid credentials';
+    }
+  } catch(e) {
+    errEl.textContent = 'Connection error';
+  }
+  btn.disabled = false;
+  btn.textContent = 'LOGIN';
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  showLoginOverlay();
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -1130,11 +1196,11 @@ let lastCustomData = null;
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  // Check if auth is required before loading anything
   try {
-    const h = await fetch('/api/health');
+    const h = await fetch('/api/health', { credentials: 'same-origin' });
     const hd = await h.json();
-    if (hd.auth && !getToken()) { showTokenOverlay(); return; }
+    if (hd.auth_required && !hd.authenticated) { showLoginOverlay(); return; }
+    document.getElementById('logoutBtn').style.display = hd.auth_required ? '' : 'none';
   } catch(e) {}
   await Promise.all([loadQueries(), checkHealth()]);
   refreshStats();
@@ -2275,12 +2341,22 @@ init();
 </script>
 
 <!-- Token Auth Overlay -->
-<div id="tokenOverlay">
-  <div class="token-box">
-    <div class="token-title">🔐 Authentication Required</div>
-    <div style="font-size:12px;color:var(--text2)">JACK HOUND_TOKEN is set. Enter your token to continue.</div>
-    <input id="tokenInput" class="token-input" type="password" placeholder="Paste token here" onkeydown="if(event.key==='Enter')submitToken()">
-    <button class="btn btn-cyan" onclick="submitToken()">CONNECT</button>
+<div id="loginOverlay">
+  <div class="login-box">
+    <div class="login-title">🐕 JACK HOUND</div>
+    <div class="login-subtitle">AD QUERY ENGINE // LOGIN</div>
+    <div class="login-field">
+      <label class="login-label" for="loginUsername">Username</label>
+      <input id="loginUsername" class="login-input" type="text" autocomplete="username"
+        onkeydown="if(event.key==='Enter')document.getElementById('loginPassword').focus()">
+    </div>
+    <div class="login-field">
+      <label class="login-label" for="loginPassword">Password</label>
+      <input id="loginPassword" class="login-input" type="password" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')submitLogin()">
+    </div>
+    <div class="login-error" id="loginError"></div>
+    <button id="loginBtn" class="btn btn-cyan" onclick="submitLogin()">LOGIN</button>
   </div>
 </div>
 
