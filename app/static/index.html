@@ -1632,6 +1632,14 @@ function sortTable(scrollId, col) {
 
   // Update index mapping so row clicks still work after sort
   window._tableRows[scrollId] = rows;
+
+  // Re-apply active filters so sorted rows respect current filter state
+  applyColFilters(scrollId);
+  const filterInputId = scrollId === 'resultsScroll' ? 'filterBox' : 'customFilter';
+  const filterInput = document.getElementById(filterInputId);
+  if (filterInput && filterInput.value) {
+    scrollId === 'resultsScroll' ? filterTable(filterInput.value) : filterCustomTable(filterInput.value);
+  }
 }
 
 function renderCell(key, val) {
@@ -1730,18 +1738,28 @@ function filterTable(val) {
   const tbl = document.querySelector('#resultsScroll table');
   if (!tbl) return;
   const q = val.toLowerCase();
+  let visible = 0;
   tbl.querySelectorAll('tbody tr').forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const show = tr.textContent.toLowerCase().includes(q);
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
   });
+  const countEl = document.getElementById('resultCount');
+  if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
 }
 
 function filterCustomTable(val) {
   const tbl = document.querySelector('#customScroll table');
   if (!tbl) return;
   const q = val.toLowerCase();
+  let visible = 0;
   tbl.querySelectorAll('tbody tr').forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const show = tr.textContent.toLowerCase().includes(q);
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
   });
+  const countEl = document.getElementById('customCount');
+  if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
 }
 
 // ── Column Filters ─────────────────────────────────────────────────────────
