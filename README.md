@@ -8,15 +8,58 @@ Red teamer's self-hosted BloodHound query platform. Drop SharpHound ZIPs, get in
 - **Python / Flask** — API + importer
 - **Vanilla JS SPA** — zero build step
 
-## Quick Start
+## Installation
+
+### Requirements
+
+- Docker + Docker Compose
+- 2 GB RAM minimum (4 GB recommended for large datasets)
+
+### First Run
 
 ```bash
 git clone https://github.com/FlakoJohnson/hound
 cd hound
-docker compose up -d --build
-# App → http://localhost:8080
-# Neo4j browser → http://localhost:7474 (neo4j / bloodhound)
+
+# Create the data directory (persists Neo4j data and the user database)
+mkdir -p data
+
+# Start with authentication enabled
+HOUND_PASS=changeme docker compose up -d --build
 ```
+
+On first boot, hound bootstraps an `admin` account from `HOUND_USER` (default: `admin`) and `HOUND_PASS`. After that, manage users through the UI — the env var is no longer used for login.
+
+```
+App      → http://localhost:8080
+Neo4j    → http://localhost:7474  (neo4j / bloodhound)
+```
+
+### Without Authentication
+
+```bash
+docker compose up -d --build
+# No HOUND_PASS = no login required
+```
+
+### Persistent Deployment
+
+Set variables in a `.env` file alongside `docker-compose.yml`:
+
+```env
+HOUND_PASS=your-admin-password
+HOUND_USER=admin
+SECRET_KEY=generate-a-random-32-char-string
+NEO4J_PASS=bloodhound
+```
+
+Then just run:
+
+```bash
+docker compose up -d --build
+```
+
+`SECRET_KEY` signs Flask session cookies. If unset, a random key is generated at startup — this invalidates all sessions on container restart.
 
 ## Import Data
 
@@ -65,21 +108,54 @@ MATCH (c:Computer {name: "WS01.DOMAIN.COM"}) SET c.owned = true
 ```
 Then run **Owned → Domain Admin (Shortest)** from the Attack Paths category.
 
-## Authentication
+## Authentication & User Management
 
-Set `HOUND_TOKEN` in the environment to require a token on all API calls:
+Login is username + password via a session cookie. Open the app and you'll see the login form when auth is enabled.
+
+### Roles
+
+| Role | Run Queries | Upload / Clear / Mark Owned / Notes | Manage Users |
+|---|:---:|:---:|:---:|
+| `admin`    | ✓ | ✓ | ✓ |
+| `operator` | ✓ | ✓ | ✗ |
+| `user`     | read-only MATCH only | ✗ | ✗ |
+
+### Managing Users
+
+Log in as `admin` → click **⚙ USERS** in the header. From there you can create accounts, set roles, enable/disable, and delete users.
+
+To create a user via the CLI (while the container is running):
 
 ```bash
-HOUND_TOKEN=mysecrettoken docker compose up -d --build
+# Create an operator account
+curl -s -c /tmp/h.jar -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"changeme"}'
+
+curl -s -b /tmp/h.jar -X POST http://localhost:8080/api/users \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"analyst","password":"hunter2","role":"operator"}'
 ```
 
-The UI will prompt for the token on first load and store it in session storage.
+### Legacy Token Auth
+
+`HOUND_TOKEN` is still supported for headless API clients (scripts, pipelines). Set it in the environment and pass it via the `X-Hound-Token` header — no session needed.
 
 ## Change Neo4j Password
 
 Edit `docker-compose.yml` → set `NEO4J_PASS` under the hound service environment, and update `NEO4J_AUTH` under the neo4j service to match.
 
+## Upgrading
+
+```bash
+cd hound
+git pull
+docker compose up -d --build
+```
+
+Data persists in Docker volumes (`neo4j_data`, `neo4j_logs`) and `./data/users.db`. No manual migration needed.
+
 ## Resource Requirements
 
-- RAM: 2GB minimum (4GB recommended for large engagements)
-- Disk: Neo4j stores ~500MB per 100k nodes typical
+- RAM: 2 GB minimum (4 GB recommended for large engagements)
+- Disk: Neo4j stores ~500 MB per 100k nodes typical
