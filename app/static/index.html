@@ -1038,8 +1038,9 @@
     transition: border-color .15s;
   }
   .form-input:focus { border-color: var(--cyan); }
-  .role-badge-admin { color: var(--red); }
-  .role-badge-user  { color: var(--green2); }
+  .role-badge-admin    { color: var(--red); }
+  .role-badge-operator { color: var(--green2); }
+  .role-badge-user     { color: var(--cyan2); }
 </style>
 </head>
 <body>
@@ -1064,8 +1065,8 @@
   </div>
 
   <div class="header-actions">
-    <button class="btn btn-orange" onclick="showTab('upload')">⬆ IMPORT</button>
-    <button class="btn btn-red"    onclick="clearDB()">⚡ CLEAR DB</button>
+    <button class="btn btn-orange" id="importBtn" onclick="showTab('upload')">⬆ IMPORT</button>
+    <button class="btn btn-red"    id="clearBtn"  onclick="clearDB()">⚡ CLEAR DB</button>
     <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
     <button class="btn btn-cyan"   id="usersBtn" onclick="openUsers()" style="display:none">⚙ USERS</button>
     <button class="btn" id="logoutBtn" onclick="logout()" style="display:none;border-color:var(--border2);color:var(--text3)">⏻ LOGOUT</button>
@@ -1253,6 +1254,19 @@ async function logout() {
   showLoginOverlay();
 }
 
+function applyRoleUI(role) {
+  const isReadOnly = role === 'user';
+  const isAdmin    = role === 'admin';
+  // Show/hide write-action buttons
+  document.getElementById('importBtn').style.display  = isReadOnly ? 'none' : '';
+  document.getElementById('clearBtn').style.display   = isReadOnly ? 'none' : '';
+  document.getElementById('usersBtn').style.display   = isAdmin    ? ''     : 'none';
+  // Show/hide write context menu items
+  document.getElementById('ctxMarkOwned').style.display     = isReadOnly ? 'none' : '';
+  document.getElementById('ctxMarkHighValue').style.display = isReadOnly ? 'none' : '';
+  document.getElementById('ctxSep1').style.display          = isReadOnly ? 'none' : '';
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let ALL_QUERIES = {};
 let currentQuery = null;
@@ -1272,7 +1286,7 @@ async function init() {
         const wd = await wr.json();
         window._currentUserId   = wd.id;
         window._currentUserRole = wd.role;
-        document.getElementById('usersBtn').style.display = wd.role === 'admin' ? '' : 'none';
+        applyRoleUI(wd.role);
       } catch(e) {}
     }
   } catch(e) {}
@@ -2317,10 +2331,11 @@ function renderObjectDetails(fullProps, rowData, groups = []) {
   // Notes
   const existingNotes = escHtml(fullProps?.hound_notes || '');
   const hasObjectId = !!document.getElementById('detailsOverlay').dataset.objectid;
+  const canWrite = window._currentUserRole !== 'user';
   html += `<div class="details-section">
     <h4>Notes</h4>
-    <textarea class="notes-input" id="notesInput" placeholder="Add engagement notes for this object..." spellcheck="false">${existingNotes}</textarea>
-    <button class="btn btn-green notes-save" onclick="saveNote(this)" ${hasObjectId ? '' : 'disabled title="No object ID — cannot save"'}>SAVE</button>
+    <textarea class="notes-input" id="notesInput" placeholder="${canWrite ? 'Add engagement notes for this object...' : 'Read-only — notes require operator role'}" spellcheck="false" ${canWrite ? '' : 'readonly'}>${existingNotes}</textarea>
+    ${canWrite ? `<button class="btn btn-green notes-save" onclick="saveNote(this)" ${hasObjectId ? '' : 'disabled title="No object ID — cannot save"'}>SAVE</button>` : ''}
   </div>`;
 
   // Group Memberships
@@ -2447,7 +2462,7 @@ function renderUsersTable(users) {
     const ts = u.last_login_at
       ? new Date(u.last_login_at * 1000).toISOString().slice(0,16).replace('T',' ')
       : '<span style="color:var(--text3)">Never</span>';
-    const roleClass = u.role === 'admin' ? 'role-badge-admin' : 'role-badge-user';
+    const roleClass = u.role === 'admin' ? 'role-badge-admin' : u.role === 'operator' ? 'role-badge-operator' : 'role-badge-user';
     const statusBadge = u.disabled
       ? '<span class="badge badge-true" style="font-size:9px">DISABLED</span>'
       : '<span class="badge badge-false" style="font-size:9px">ACTIVE</span>';
@@ -2591,7 +2606,8 @@ init();
           <div class="form-field">
             <label class="form-label">Role</label>
             <select id="newRole" class="form-input" style="cursor:pointer">
-              <option value="user">user</option>
+              <option value="operator">operator</option>
+              <option value="user">user (read-only)</option>
               <option value="admin">admin</option>
             </select>
           </div>
@@ -2620,9 +2636,9 @@ init();
 <!-- Context Menu -->
 <div id="ctxMenu">
   <div class="ctx-label" id="ctxNodeLabel">NODE</div>
-  <div class="ctx-separator"></div>
-  <div class="ctx-item danger"  onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
-  <div class="ctx-item good"    onclick="ctxMarkHighValue()">★ Mark High Value</div>
+  <div class="ctx-separator" id="ctxSep1"></div>
+  <div class="ctx-item danger" id="ctxMarkOwned"     onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
+  <div class="ctx-item good"   id="ctxMarkHighValue" onclick="ctxMarkHighValue()">★ Mark High Value</div>
   <div class="ctx-separator"></div>
   <div class="ctx-item"         onclick="ctxCopyName()">⎘ Copy Name</div>
   <div class="ctx-item"         onclick="ctxCopySID()">⎘ Copy SID / ObjectID</div>

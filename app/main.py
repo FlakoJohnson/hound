@@ -30,7 +30,13 @@ SECRET_KEY  = os.environ.get('SECRET_KEY',  '').strip() or secrets.token_hex(32)
 
 app.secret_key = SECRET_KEY
 
-# Cypher operations that can never be run via the query API
+# Roles in ascending privilege order
+VALID_ROLES = ('user', 'operator', 'admin')
+
+# Cypher write keywords blocked for read-only 'user' role
+_WRITE_KEYWORDS = ['SET ', 'CREATE ', 'MERGE ', 'REMOVE ', 'DELETE ']
+
+# Cypher operations that are always blocked regardless of role
 _BLOCKED_OPS = ['DETACH DELETE', 'DROP ']
 
 
@@ -62,20 +68,22 @@ class UserStore:
     def _init(self):
         with self._conn() as c:
             c.execute('''CREATE TABLE IF NOT EXISTS users (
-                id          TEXT PRIMARY KEY,
-                username    TEXT UNIQUE NOT NULL,
+                id            TEXT PRIMARY KEY,
+                username      TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                role        TEXT NOT NULL DEFAULT 'user',
-                disabled    INTEGER NOT NULL DEFAULT 0,
-                created_at  INTEGER NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'operator',
+                disabled      INTEGER NOT NULL DEFAULT 0,
+                created_at    INTEGER NOT NULL,
                 last_login_at INTEGER
             )''')
+            # Migrate old 'user' role (pre-rename) to 'operator'
+            c.execute("UPDATE users SET role='operator' WHERE role='user'")
 
     def count(self):
         with self._conn() as c:
             return c.execute('SELECT COUNT(*) FROM users').fetchone()[0]
 
-    def create(self, username, password, role='user'):
+    def create(self, username, password, role='operator'):
         uid = secrets.token_hex(16)
         with self._conn() as c:
             c.execute(
@@ -135,6 +143,13 @@ AUTH_REQUIRED = bool(user_store.count() > 0 or HOUND_TOKEN)
 
 # ── Auth helpers ───────────────────────────────────────────────────────────────
 
+def _current_role():
+    """Return the effective role for the current request."""
+    if not AUTH_REQUIRED:
+        return 'admin'
+    return session.get('role', '')
+
+
 def _is_authenticated():
     if not AUTH_REQUIRED:
         return True
@@ -145,13 +160,8 @@ def _is_authenticated():
     return False
 
 
-def _is_admin():
-    if not AUTH_REQUIRED:
-        return True
-    return session.get('role') == 'admin'
-
-
 def require_auth(f):
+    """Any authenticated user."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _is_authenticated():
@@ -160,13 +170,27 @@ def require_auth(f):
     return decorated
 
 
-def require_admin(f):
+def require_operator(f):
+    """Operator or admin (not read-only user)."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _is_authenticated():
             return jsonify({'error': 'Unauthorized'}), 401
-        if not _is_admin():
-            return jsonify({'error': 'Forbidden'}), 403
+        role = _current_role()
+        if AUTH_REQUIRED and role not in ('operator', 'admin'):
+            return jsonify({'error': 'Forbidden: operator role required'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_admin(f):
+    """Admin only."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not _is_authenticated():
+            return jsonify({'error': 'Unauthorized'}), 401
+        if AUTH_REQUIRED and _current_role() != 'admin':
+            return jsonify({'error': 'Forbidden: admin role required'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -249,8 +273,7 @@ def whoami():
 @app.route('/api/users', methods=['GET'])
 @require_admin
 def list_users():
-    users = user_store.list_all()
-    return jsonify({'users': users})
+    return jsonify({'users': user_store.list_all()})
 
 
 @app.route('/api/users', methods=['POST'])
@@ -259,11 +282,11 @@ def create_user():
     data = request.json or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    role     = data.get('role', 'user')
+    role     = data.get('role', 'operator')
     if not username or not password:
         return jsonify({'error': 'Username and password required'}), 400
-    if role not in ('admin', 'user'):
-        return jsonify({'error': 'Invalid role'}), 400
+    if role not in VALID_ROLES:
+        return jsonify({'error': f'Invalid role (must be one of: {", ".join(VALID_ROLES)})'}), 400
     try:
         uid = user_store.create(username, password, role)
         return jsonify({'success': True, 'id': uid})
@@ -281,7 +304,7 @@ def update_user(uid):
     if 'disabled' in data:
         kw['disabled'] = int(bool(data['disabled']))
     if 'role' in data:
-        if data['role'] not in ('admin', 'user'):
+        if data['role'] not in VALID_ROLES:
             return jsonify({'error': 'Invalid role'}), 400
         kw['role'] = data['role']
     user_store.update(uid, **kw)
@@ -291,7 +314,7 @@ def update_user(uid):
 @app.route('/api/users/<uid>/password', methods=['POST'])
 @require_auth
 def change_password(uid):
-    if not _is_admin() and session.get('user_id') != uid:
+    if _current_role() != 'admin' and session.get('user_id') != uid:
         return jsonify({'error': 'Forbidden'}), 403
     data = request.json or {}
     new_password = data.get('password', '')
@@ -362,9 +385,16 @@ def run_query():
         params = {}
 
     cypher_upper = cypher.upper()
+
     for op in _BLOCKED_OPS:
         if op in cypher_upper:
             return jsonify({'success': False, 'error': f'Operation not permitted: {op}'}), 403
+
+    # Read-only enforcement for 'user' role
+    if _current_role() == 'user':
+        for op in _WRITE_KEYWORDS:
+            if op in cypher_upper:
+                return jsonify({'success': False, 'error': 'Read-only access: write operations not permitted'}), 403
 
     try:
         with get_driver().session() as neo4j_session:
@@ -388,7 +418,7 @@ def run_query():
 
 
 @app.route('/api/upload', methods=['POST'])
-@require_auth
+@require_operator
 def upload():
     f = request.files.get('file')
     if not f:
@@ -402,7 +432,7 @@ def upload():
 
 
 @app.route('/api/notes', methods=['POST'])
-@require_auth
+@require_operator
 def save_note():
     data = request.json or {}
     objectid = data.get('objectid', '').strip()
@@ -421,7 +451,7 @@ def save_note():
 
 
 @app.route('/api/clear', methods=['POST'])
-@require_auth
+@require_operator
 def clear_db():
     try:
         imp = BloodHoundImporter(get_driver())
