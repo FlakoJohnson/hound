@@ -25,7 +25,7 @@ CORS(app, supports_credentials=True)
 HOUND_USER  = os.environ.get('HOUND_USER',  'admin').strip()
 HOUND_PASS  = os.environ.get('HOUND_PASS',  '').strip()
 HOUND_TOKEN = os.environ.get('HOUND_TOKEN', '').strip()  # legacy token auth, still supported
-SECRET_KEY  = os.environ.get('SECRET_KEY',  secrets.token_hex(32))
+SECRET_KEY  = os.environ.get('SECRET_KEY',  '').strip() or secrets.token_hex(32)
 
 app.secret_key = SECRET_KEY
 
