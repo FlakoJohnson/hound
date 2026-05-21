@@ -678,6 +678,15 @@
   .tree-dup { color: var(--text3); font-style: italic; }
   .tree-disabled { color: var(--red, #e57373); margin-right: 4px; }
   .tree-count { color: var(--text3); font-size: 11px; margin-left: 6px; }
+  .tree-controls { padding: 4px 0 10px; display: flex; gap: 6px; }
+  .tree-ctrl-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text2);
+    font-family: inherit; font-size: 10px; padding: 4px 10px; cursor: pointer;
+    letter-spacing: 0.05em; border-radius: 2px; transition: color .1s, border-color .1s;
+  }
+  .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+  .tree-hit > .tree-name,
+  .tree-hit > details > summary > .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
   .empty-icon {
     font-size: 48px;
     opacity: .3;
@@ -1753,6 +1762,9 @@ function showError(msg, scrollId) {
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 function filterTable(val) {
+  // Tree view path: container-tree renders into #resultsScroll without a table.
+  const tree = document.querySelector('#resultsScroll .tree-root');
+  if (tree) return filterTreeView(tree, val);
   const tbl = document.querySelector('#resultsScroll table');
   if (!tbl) return;
   const q = val.toLowerCase();
@@ -1764,6 +1776,52 @@ function filterTable(val) {
   });
   const countEl = document.getElementById('resultCount');
   if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
+}
+
+function filterTreeView(root, val) {
+  const q = (val || '').trim().toLowerCase();
+  // Reset: clear hide flags and let collapsed branches stay collapsed.
+  const allItems = root.querySelectorAll('li');
+  if (!q) {
+    allItems.forEach(li => { li.style.display = ''; li.classList.remove('tree-hit'); });
+    // Also collapse the open-by-filter branches we may have force-opened.
+    root.querySelectorAll('details[data-filter-opened]').forEach(d => {
+      d.open = d.dataset.filterPrev === '1';
+      delete d.dataset.filterOpened;
+      delete d.dataset.filterPrev;
+    });
+    const cEl = document.getElementById('resultCount');
+    if (cEl && window._treeCountHTML) cEl.innerHTML = window._treeCountHTML;
+    return;
+  }
+  // 1. Match on the leaf/branch's own .tree-name text only — not descendants.
+  let hits = 0;
+  allItems.forEach(li => {
+    const nameEl = li.querySelector(':scope > .tree-name, :scope > details > summary > .tree-name');
+    const hit = nameEl && nameEl.textContent.toLowerCase().includes(q);
+    li.classList.toggle('tree-hit', hit);
+    if (hit) hits++;
+  });
+  // 2. Hide any li that has no hit in its subtree (including itself).
+  const subtreeHasHit = (li) => li.classList.contains('tree-hit') ||
+    li.querySelector('.tree-hit') !== null;
+  allItems.forEach(li => { li.style.display = subtreeHasHit(li) ? '' : 'none'; });
+  // 3. Force-open every <details> ancestor of a hit so matches are visible.
+  root.querySelectorAll('.tree-hit').forEach(li => {
+    let p = li.parentElement;
+    while (p && p !== root) {
+      if (p.tagName === 'DETAILS' && !p.open) {
+        if (!p.dataset.filterOpened) {
+          p.dataset.filterOpened = '1';
+          p.dataset.filterPrev = '0';
+        }
+        p.open = true;
+      }
+      p = p.parentElement;
+    }
+  });
+  const cEl = document.getElementById('resultCount');
+  if (cEl) cEl.innerHTML = `MATCHES: <span>${hits.toLocaleString()}</span> — filter: <span style="color:var(--cyan)">${escHtml(val)}</span>`;
 }
 
 function filterCustomTable(val) {
@@ -2402,7 +2460,12 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     return html;
   }
 
-  let html = `<div class="tree-root"><ul>`;
+  let html = `<div class="tree-root">
+    <div class="tree-controls">
+      <button class="tree-ctrl-btn" onclick="treeExpandAll(true)">▾ EXPAND ALL</button>
+      <button class="tree-ctrl-btn" onclick="treeExpandAll(false)">▸ COLLAPSE ALL</button>
+    </div>
+    <ul>`;
   for (const r of roots) html += renderNode(r, 0, true);
   html += `</ul></div>`;
 
@@ -2411,7 +2474,17 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
   scroll.innerHTML = html;
   toolbar.style.display = '';
   const total = counts.Container + counts.OU + counts.User + counts.Computer + counts.Group + counts.GPO + counts.Domain;
-  countEl.innerHTML = `NODES: <span>${total.toLocaleString()}</span> · containers <span>${counts.Container}</span> · OUs <span>${counts.OU}</span> · users <span>${counts.User}</span> · computers <span>${counts.Computer}</span> · groups <span>${counts.Group}</span> · GPOs <span>${counts.GPO}</span>`;
+  const countHTML = `NODES: <span>${total.toLocaleString()}</span> · containers <span>${counts.Container}</span> · OUs <span>${counts.OU}</span> · users <span>${counts.User}</span> · computers <span>${counts.Computer}</span> · groups <span>${counts.Group}</span> · GPOs <span>${counts.GPO}</span>`;
+  countEl.innerHTML = countHTML;
+  // Stash so filter-clear can restore it without recomputing.
+  window._treeCountHTML = countHTML;
+  // Reset any leftover filter value from a previous view.
+  const fb = document.getElementById('filterBox');
+  if (fb) fb.value = '';
+}
+
+function treeExpandAll(open) {
+  document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => { d.open = !!open; });
 }
 
 // ── Object Details Panel ───────────────────────────────────────────────────
