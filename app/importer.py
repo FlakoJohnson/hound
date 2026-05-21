@@ -21,11 +21,17 @@ TYPE_TO_LABEL = {
     'container': 'Container',
     'containers': 'Container',
     'aiaca': 'AIACA',
+    'aiacas': 'AIACA',
     'rootca': 'RootCA',
+    'rootcas': 'RootCA',
     'enterpriseca': 'EnterpriseCA',
+    'enterprisecas': 'EnterpriseCA',
     'ntauthstore': 'NTAuthStore',
+    'ntauthstores': 'NTAuthStore',
     'certtemplate': 'CertTemplate',
+    'certtemplates': 'CertTemplate',
     'issuancepolicy': 'IssuancePolicy',
+    'issuancepolicies': 'IssuancePolicy',
     'aztenant': 'AZTenant',
     'azuser': 'AZUser',
     'azgroup': 'AZGroup',
@@ -71,7 +77,8 @@ ALLOWED_REL_TYPES = {
 MAX_DECOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 
 FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'container',
-                   'certtemplate', 'enterpriseca', 'rootca', 'aiaca', 'ntauthstore']
+                   'certtemplate', 'enterpriseca', 'rootca', 'aiaca', 'ntauthstore',
+                   'issuancepolicy']
 
 
 class BloodHoundImporter:
