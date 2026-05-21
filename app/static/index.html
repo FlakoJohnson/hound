@@ -662,22 +662,39 @@
   }
 
   /* Container / OU hierarchy tree */
-  .tree-root { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; padding: 8px 12px; }
-  .tree-root ul { list-style: none; padding-left: 18px; margin: 0; border-left: 1px solid var(--border, #2a2a2a); }
+  .tree-root { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; padding: 10px 14px; line-height: 1.45; }
+  .tree-root ul { list-style: none; padding-left: 22px; margin: 0; border-left: 1px dashed var(--border); }
   .tree-root > ul { padding-left: 0; border-left: none; }
-  .tree-root li { padding: 2px 0; }
-  .tree-branch > summary { cursor: pointer; padding: 3px 6px; border-radius: 3px; display: inline-flex; align-items: center; gap: 8px; list-style: none; user-select: none; }
+  .tree-root li { padding: 1px 0; position: relative; }
+  /* Connector tick from the vertical guide to each row */
+  .tree-root ul li::before {
+    content: ''; position: absolute; left: -22px; top: 13px; width: 18px;
+    border-top: 1px dashed var(--border);
+  }
+  .tree-root > ul > li::before { display: none; }
+  .tree-branch > summary { cursor: pointer; padding: 4px 8px 4px 4px; border-radius: 3px; display: inline-flex; align-items: center; gap: 10px; list-style: none; user-select: none; }
   .tree-branch > summary::-webkit-details-marker { display: none; }
-  .tree-branch > summary::before { content: '▸'; color: var(--text3); width: 12px; display: inline-block; transition: transform 0.1s; }
-  .tree-branch[open] > summary::before { content: '▾'; }
-  .tree-branch > summary:hover { background: rgba(255,255,255,.04); }
-  .tree-leaf { padding-left: 18px; display: flex; align-items: center; gap: 8px; }
-  .tree-badge { font-size: 10px; padding: 1px 5px; border-radius: 2px; color: #0a0a0a; font-weight: 600; letter-spacing: 0.3px; }
+  .tree-branch > summary::before {
+    content: '▸'; color: var(--text2); width: 14px; display: inline-block;
+    text-align: center; transition: transform 0.12s ease; font-size: 10px;
+  }
+  .tree-branch[open] > summary::before { transform: rotate(90deg); }
+  .tree-branch > summary:hover { background: rgba(100,255,218,.06); }
+  .tree-leaf { padding: 3px 8px 3px 4px; display: flex; align-items: center; gap: 10px; border-radius: 3px; }
+  .tree-leaf:hover { background: rgba(255,255,255,.03); }
+  .tree-badge {
+    font-size: 9.5px; padding: 2px 7px; border-radius: 3px; color: #0a0a0a;
+    font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    flex-shrink: 0; min-width: 38px; text-align: center;
+  }
   .tree-name { cursor: pointer; }
   .tree-name:hover { color: var(--cyan); text-decoration: underline; }
   .tree-dup { color: var(--text3); font-style: italic; }
-  .tree-disabled { color: var(--red, #e57373); margin-right: 4px; }
-  .tree-count { color: var(--text3); font-size: 11px; margin-left: 6px; }
+  .tree-disabled { color: var(--red); margin-right: 4px; }
+  .tree-count {
+    color: var(--text3); font-size: 10px; margin-left: 4px;
+    padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;
+  }
   .tree-branch-name { cursor: pointer; }
   .tree-branch-name:hover { color: var(--cyan); }
   .tree-info {
@@ -685,15 +702,19 @@
     padding: 0 4px; border-radius: 2px;
   }
   .tree-info:hover { color: var(--cyan); background: rgba(100,255,218,.08); }
-  .tree-leaf-marker { color: var(--text3); width: 12px; display: inline-block; text-align: center; font-size: 14px; }
-  .tree-empty { color: var(--text3); font-size: 10px; font-style: italic; margin-left: 8px; }
-  .tree-controls { padding: 4px 0 10px; display: flex; gap: 6px; }
+  .tree-leaf-marker { color: var(--text3); width: 14px; display: inline-block; text-align: center; font-size: 13px; opacity: 0.6; }
+  .tree-empty { color: var(--text3); font-size: 10px; font-style: italic; margin-left: 8px; letter-spacing: 0.2px; }
+  .tree-controls {
+    padding: 0 0 14px; margin-bottom: 8px; display: flex; gap: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
   .tree-ctrl-btn {
     background: transparent; border: 1px solid var(--border); color: var(--text2);
-    font-family: inherit; font-size: 10px; padding: 4px 10px; cursor: pointer;
-    letter-spacing: 0.05em; border-radius: 2px; transition: color .1s, border-color .1s;
+    font-family: inherit; font-size: 10px; padding: 5px 12px; cursor: pointer;
+    letter-spacing: 0.08em; border-radius: 2px; transition: color .12s, border-color .12s, background .12s;
+    text-transform: uppercase;
   }
-  .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+  .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(100,255,218,.05); }
   .tree-hit > .tree-name,
   .tree-hit > details > summary > .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
   .empty-icon {
