@@ -2345,9 +2345,15 @@ async function showObjectStats(objectType) {
       ? `MATCH (n:Computer) WHERE n.name IS NOT NULL AND n.domain = $domain RETURN n.name AS DNS_Name, n.description AS Description, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`
       : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.description AS Description, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
   } else if (objectType === 'Group') {
+    // n.name IS NOT NULL filters out stub Group nodes. Stubs are created when
+    // an ACE / Member reference in one zip points to a Group whose home domain
+    // wasn't imported (e.g. north.sevenkingdoms uploaded but sevenkingdoms not,
+    // and a north ACE references a SEVENKINGDOMS Domain Admins SID). They have
+    // only an objectid + edges and are useful for edge resolution but noisy in
+    // the list view.
     cypher = hasDomain
-      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
-      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
+      ? `MATCH (n:Group) WHERE n.domain = $domain AND n.name IS NOT NULL OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
+      : `MATCH (n:Group) WHERE n.name IS NOT NULL OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
   } else if (objectType === 'Domain') {
     cypher = 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS Domain, count(n) AS Object_Count ORDER BY Domain';
   }
