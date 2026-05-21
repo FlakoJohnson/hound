@@ -1740,6 +1740,11 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function escAttr(s) {
+  // For HTML attribute values — also escapes double-quotes.
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function showEmpty() {
   document.getElementById('resultsScroll').innerHTML = `
     <div class="empty-state">
@@ -1794,11 +1799,12 @@ function filterTreeView(root, val) {
     if (cEl && window._treeCountHTML) cEl.innerHTML = window._treeCountHTML;
     return;
   }
-  // 1. Match on the leaf/branch's own .tree-name text only — not descendants.
+  // 1. Match on the li's data-search blob (full name + DN + objectid),
+  // lowercased once at render time. Filtering by partial DN now works.
   let hits = 0;
   allItems.forEach(li => {
-    const nameEl = li.querySelector(':scope > .tree-name, :scope > details > summary > .tree-name');
-    const hit = nameEl && nameEl.textContent.toLowerCase().includes(q);
+    const blob = li.dataset.search || '';
+    const hit = blob.includes(q);
     li.classList.toggle('tree-hit', hit);
     if (hit) hits++;
   });
@@ -2293,6 +2299,7 @@ async function showContainerTree() {
   // leaves inside e.g. ForeignSecurityPrincipals).
   // [lbl IN labels(...) WHERE lbl <> 'Base'][0] skips the universal :Base
   // label so the badge reflects the real AD type (User/Computer/Group/etc.).
+  // distinguishedname is included so the filter can match by full DN.
   const cypher = hasDomain
     ? `MATCH (parent)-[:Contains]->(child)
 WHERE (parent:Domain OR parent:Container OR parent:OU)
@@ -2301,9 +2308,11 @@ WHERE (parent:Domain OR parent:Container OR parent:OU)
 RETURN coalesce(parent.objectid, parent.name) AS parentId,
        parent.name AS parentName,
        [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
+       parent.distinguishedname AS parentDN,
        coalesce(child.objectid, child.name) AS childId,
        child.name AS childName,
        [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
+       child.distinguishedname AS childDN,
        child.enabled AS childEnabled
 ORDER BY parentName, childName`
     : `MATCH (parent)-[:Contains]->(child)
@@ -2312,9 +2321,11 @@ WHERE (parent:Domain OR parent:Container OR parent:OU)
 RETURN coalesce(parent.objectid, parent.name) AS parentId,
        parent.name AS parentName,
        [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
+       parent.distinguishedname AS parentDN,
        coalesce(child.objectid, child.name) AS childId,
        child.name AS childName,
        [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
+       child.distinguishedname AS childDN,
        child.enabled AS childEnabled
 ORDER BY parentName, childName`;
   const params = hasDomain ? {domain} : {};
@@ -2367,14 +2378,14 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     return;
   }
 
-  // Index rows: parentId → [{id, name, type, enabled}], and remember every
+  // Index rows: parentId → [{id, name, type, dn, enabled}], and remember every
   // node we see (parent or child) so we can resolve names + find roots.
   const childrenByParent = new Map();
-  const nodes = new Map(); // id → {id, name, type, enabled}
+  const nodes = new Map(); // id → {id, name, type, dn, enabled}
   const seenAsChild = new Set();
   for (const r of rows) {
-    const p = {id: r.parentId, name: r.parentName, type: r.parentType, enabled: null};
-    const c = {id: r.childId, name: r.childName, type: r.childType, enabled: r.childEnabled};
+    const p = {id: r.parentId, name: r.parentName, type: r.parentType, dn: r.parentDN, enabled: null};
+    const c = {id: r.childId, name: r.childName, type: r.childType, dn: r.childDN, enabled: r.childEnabled};
     if (!nodes.has(p.id)) nodes.set(p.id, p);
     if (!nodes.has(c.id)) nodes.set(c.id, c);
     if (!childrenByParent.has(p.id)) childrenByParent.set(p.id, []);
@@ -2423,10 +2434,16 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
   const visited = new Set();
   const MAX_DEPTH = 64; // belt-and-braces cycle guard
 
+  function searchBlob(node) {
+    // Lowercased haystack the filter searches against — full name, DN, objectid.
+    return [node.name, node.dn, node.id].filter(Boolean).join(' ').toLowerCase();
+  }
+
   function renderNode(node, depth, openByDefault) {
+    const search = escAttr(searchBlob(node));
     if (visited.has(node.id) || depth > MAX_DEPTH) {
       // Cycle or runaway recursion — render as a leaf reference.
-      return `<li class="tree-leaf"><span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span><span class="tree-name tree-dup">${escHtml(shortName(node.name))}</span></li>`;
+      return `<li class="tree-leaf" data-search="${search}"><span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span><span class="tree-name tree-dup">${escHtml(shortName(node.name))}</span></li>`;
     }
     visited.add(node.id);
     if (counts[node.type] !== undefined) counts[node.type]++;
@@ -2449,11 +2466,11 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
     if (kids.length === 0) {
       visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
-      return `<li class="tree-leaf">${nameLabel}</li>`;
+      return `<li class="tree-leaf" data-search="${search}">${nameLabel}</li>`;
     }
     // Expand depth 0-1 by default; deeper levels collapsed.
     const openAttr = openByDefault ? ' open' : '';
-    let html = `<li><details class="tree-branch"${openAttr}><summary>${nameLabel}<span class="tree-count">${kids.length}</span></summary><ul>`;
+    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary>${nameLabel}<span class="tree-count">${kids.length}</span></summary><ul>`;
     for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
     html += `</ul></details></li>`;
     visited.delete(node.id);
