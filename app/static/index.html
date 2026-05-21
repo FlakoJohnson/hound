@@ -1808,10 +1808,25 @@ function filterTreeView(root, val) {
     li.classList.toggle('tree-hit', hit);
     if (hit) hits++;
   });
-  // 2. Hide any li that has no hit in its subtree (including itself).
-  const subtreeHasHit = (li) => li.classList.contains('tree-hit') ||
-    li.querySelector('.tree-hit') !== null;
-  allItems.forEach(li => { li.style.display = subtreeHasHit(li) ? '' : 'none'; });
+  // 2. Show an li if it matches, has a matching descendant, OR has a
+  // matching ancestor. The third case is critical: when you filter for a
+  // container's DN, you expect to expand it and see what's inside — its
+  // children's individual DNs/names won't contain the container's DN
+  // (and synthetic well-known nodes have no DN at all).
+  const hasAncestorHit = (li) => {
+    let p = li.parentElement;
+    while (p && p !== root) {
+      if (p.tagName === 'LI' && p.classList.contains('tree-hit')) return true;
+      p = p.parentElement;
+    }
+    return false;
+  };
+  allItems.forEach(li => {
+    const show = li.classList.contains('tree-hit') ||
+                 li.querySelector('.tree-hit') !== null ||
+                 hasAncestorHit(li);
+    li.style.display = show ? '' : 'none';
+  });
   // 3. Force-open every <details> ancestor of a hit so matches are visible.
   root.querySelectorAll('.tree-hit').forEach(li => {
     let p = li.parentElement;
