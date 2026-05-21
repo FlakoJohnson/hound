@@ -1949,6 +1949,34 @@ function _ctxIdent(row) {
   return null;
 }
 
+async function ctxOpenInVisualizer() {
+  hideCtxMenu();
+  const row = _ctxRow();
+  if (!row) return;
+  // Prefer the distinguished name if the row has one (it's the most unique
+  // and works for filtering by full DN). Fall back to objectid, then name.
+  let filter = '';
+  for (const v of Object.values(row)) {
+    if (v && typeof v === 'string' && /^(CN|OU|DC)=/i.test(v)) { filter = v; break; }
+  }
+  if (!filter) {
+    const ident = _ctxIdent(row);
+    if (ident) filter = ident.val;
+  }
+  if (!filter) return toast('Cannot identify node', 'err');
+  await showContainerTree();
+  const fb = document.getElementById('filterBox');
+  if (fb) {
+    fb.value = filter;
+    fb.dispatchEvent(new Event('input'));
+    // Scroll the first hit into view.
+    setTimeout(() => {
+      const hit = document.querySelector('#resultsScroll .tree-hit');
+      if (hit) hit.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }, 100);
+  }
+}
+
 async function ctxMarkOwned() {
   hideCtxMenu();
   const row = _ctxRow(), ident = _ctxIdent(row);
@@ -2410,11 +2438,10 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
   function nodeRow(n) {
     // The details modal scans values for SIDs and types — feed it both.
-    return {
-      Name: n.name,
-      Type: n.type,
-      objectid: n.id,
-    };
+    // DN is included so ctx menu "Open in Visualizer" can re-filter by DN.
+    const r = {Name: n.name, Type: n.type, objectid: n.id};
+    if (n.dn) r.DistinguishedName = n.dn;
+    return r;
   }
 
   function shortName(name) {
@@ -2462,7 +2489,7 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
     const badge = `<span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span>`;
     const enabledMark = (node.enabled === false) ? '<span class="tree-disabled" title="disabled">⊘</span>' : '';
-    const nameLabel = `${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})">${escHtml(shortName(node.name))}</span>`;
+    const nameLabel = `${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})">${escHtml(shortName(node.name))}</span>`;
 
     if (kids.length === 0) {
       visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
@@ -2619,7 +2646,7 @@ async function showObjectDetails(tableId, rowIndex) {
       const typeFilter = (!lookupSid && lookupType) ? `:${lookupType}` : '';
       const [nodeRes, groupRes] = await Promise.all([
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
+          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS _type LIMIT 1`})
         }),
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n)-[:MemberOf]->(g:Group) WHERE ${where} RETURN g.name AS name, g.admincount AS admincount, g.domain AS domain ORDER BY g.admincount DESC, g.name`})
@@ -2957,6 +2984,8 @@ init();
 <div id="ctxMenu">
   <div class="ctx-label" id="ctxNodeLabel">NODE</div>
   <div class="ctx-separator" id="ctxSep1"></div>
+  <div class="ctx-item" id="ctxOpenInTree" onclick="ctxOpenInVisualizer()">🌲 Open in Visualizer</div>
+  <div class="ctx-separator"></div>
   <div class="ctx-item danger" id="ctxMarkOwned"     onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
   <div class="ctx-item good"   id="ctxMarkHighValue" onclick="ctxMarkHighValue()">★ Mark High Value</div>
   <div class="ctx-separator"></div>
