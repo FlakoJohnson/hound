@@ -2015,11 +2015,15 @@ async function ctxOpenInVisualizer() {
   hideCtxMenu();
   const row = _ctxRow();
   if (!row) return;
-  // Prefer the distinguished name if the row has one (it's the most unique
-  // and works for filtering by full DN). Fall back to objectid, then name.
+  // Priority: objectid (most unique, always matches if node is in the tree),
+  // then DN, then name. Each row may have any subset of these.
   let filter = '';
-  for (const v of Object.values(row)) {
-    if (v && typeof v === 'string' && /^(CN|OU|DC)=/i.test(v)) { filter = v; break; }
+  const oid = row.objectid || row.ObjectID || row.GUID;
+  if (oid && typeof oid === 'string') filter = oid;
+  if (!filter) {
+    for (const v of Object.values(row)) {
+      if (v && typeof v === 'string' && /^(CN|OU|DC)=/i.test(v)) { filter = v; break; }
+    }
   }
   if (!filter) {
     const ident = _ctxIdent(row);
@@ -2031,11 +2035,16 @@ async function ctxOpenInVisualizer() {
   if (fb) {
     fb.value = filter;
     fb.dispatchEvent(new Event('input'));
-    // Scroll the first hit into view.
+    // Scroll the first hit into view; toast if nothing matched (object is
+    // not in the Contains tree — e.g. a Group with no parent container).
     setTimeout(() => {
       const hit = document.querySelector('#resultsScroll .tree-hit');
-      if (hit) hit.scrollIntoView({block: 'center', behavior: 'smooth'});
-    }, 100);
+      if (hit) {
+        hit.scrollIntoView({block: 'center', behavior: 'smooth'});
+      } else {
+        toast('Not in Contains tree (orphan node)', 'err');
+      }
+    }, 150);
   }
 }
 
@@ -2336,8 +2345,8 @@ async function showObjectStats(objectType) {
       : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.description AS Description, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
   } else if (objectType === 'Group') {
     cypher = hasDomain
-      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
-      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
+      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
+      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
   } else if (objectType === 'Domain') {
     cypher = 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS Domain, count(n) AS Object_Count ORDER BY Domain';
   }
