@@ -285,7 +285,7 @@ ORDER BY Domain, Computer"""
             "id": "esc1_candidates",
             "name": "ESC1 — SAN Enrollable Templates",
             "description": "Templates with client auth EKU where enrollee controls SAN — impersonate any user",
-            "cypher": """MATCH (n:Certtemplates)
+            "cypher": """MATCH (n:CertTemplate)
 WHERE n.enrolleesuppliessubject = true
   AND ('1.3.6.1.5.5.7.3.2' IN n.ekus
        OR '1.3.6.1.4.1.311.20.2.2' IN n.ekus
@@ -298,7 +298,7 @@ ORDER BY Domain, Template"""
             "id": "esc4_template_write",
             "name": "ESC4 — Template Write Access",
             "description": "Principals with write rights over certificate templates — modify to create ESC1",
-            "cypher": """MATCH p=(n)-[:GenericAll|GenericWrite|WriteDacl|WriteOwner|Owns]->(t:Certtemplates)
+            "cypher": """MATCH p=(n)-[:GenericAll|GenericWrite|WriteDacl|WriteOwner|Owns]->(t:CertTemplate)
 RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type, t.name AS Template
 ORDER BY Template, Principal"""
         },
@@ -306,7 +306,7 @@ ORDER BY Template, Principal"""
             "id": "manage_ca",
             "name": "ManageCA / ManageCertificates Rights",
             "description": "Who has Officer/Manager rights over Certificate Authorities",
-            "cypher": """MATCH p=(n)-[:ManageCA|ManageCertificates]->(ca:Enterprisecas)
+            "cypher": """MATCH p=(n)-[:ManageCA|ManageCertificates]->(ca:EnterpriseCA)
 RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
        coalesce(ca.name, ca.objectid) AS CertAuthority, labels(ca)[0] AS CAType
 ORDER BY CertAuthority, Principal"""
@@ -315,7 +315,7 @@ ORDER BY CertAuthority, Principal"""
             "id": "enroll_rights",
             "name": "Certificate Enrollment Rights",
             "description": "Who has Enroll permissions on certificate templates",
-            "cypher": """MATCH p=(n)-[:Enroll]->(t:Certtemplates)
+            "cypher": """MATCH p=(n)-[:Enroll]->(t:CertTemplate)
 RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
        t.name AS Template, t.domain AS Domain
 ORDER BY Domain, Template"""
@@ -324,7 +324,7 @@ ORDER BY Domain, Template"""
             "id": "pki_write",
             "name": "PKI Flag Write Access",
             "description": "WritePKIEnrollmentFlag / WritePKINameFlag — ESC6/ESC3 variant indicators",
-            "cypher": """MATCH p=(n)-[:WritePKIEnrollmentFlag|WritePKINameFlag]->(t:Certtemplates)
+            "cypher": """MATCH p=(n)-[:WritePKIEnrollmentFlag|WritePKINameFlag]->(t:CertTemplate)
 RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
        type(relationships(p)[0]) AS Right, t.name AS Template
 ORDER BY Template, Principal"""
