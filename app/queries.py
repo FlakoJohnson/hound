@@ -481,6 +481,34 @@ ORDER BY Type, Principal"""
         },
     ],
 
+    "Hierarchy": [
+        {
+            "id": "container_hierarchy",
+            "name": "Container & OU Hierarchy",
+            "description": "Domain → Containers → OUs → Users/Computers/Groups/GPOs (use the Containers sidebar button to render as a tree)",
+            "cypher": """MATCH (parent)-[:Contains]->(child)
+WHERE (parent:Domain OR parent:Container OR parent:OU)
+  AND (child:Container OR child:OU OR child:User OR child:Computer
+       OR child:Group OR child:GPO)
+RETURN coalesce(parent.objectid, parent.name) AS parentId,
+       parent.name AS parentName,
+       labels(parent)[0] AS parentType,
+       coalesce(child.objectid, child.name) AS childId,
+       child.name AS childName,
+       labels(child)[0] AS childType,
+       child.enabled AS childEnabled
+ORDER BY parentName, childName"""
+        },
+        {
+            "id": "containers_per_domain",
+            "name": "Container counts per domain",
+            "description": "How many Containers and OUs each domain has",
+            "cypher": """MATCH (n) WHERE (n:Container OR n:OU) AND n.domain IS NOT NULL
+RETURN n.domain AS Domain, labels(n)[0] AS Type, count(n) AS Count
+ORDER BY Domain, Type"""
+        },
+    ],
+
     "Quick Stats": [
         {
             "id": "env_overview",
