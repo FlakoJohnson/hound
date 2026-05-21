@@ -24,7 +24,7 @@ ORDER BY Domain, Computer"""
             "description": "All objects marked as high value in this dataset",
             "cypher": """MATCH (n)
 WHERE n.highvalue = true
-RETURN labels(n)[0] AS Type, n.name AS Name, n.domain AS Domain
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, n.name AS Name, n.domain AS Domain
 ORDER BY Type, Domain, Name"""
         },
         {
@@ -147,7 +147,7 @@ ORDER BY Domain, User"""
             "description": "Principals allowed to delegate to specific services — potential s4u2proxy abuse",
             "cypher": """MATCH (n)
 WHERE n.allowedtodelegate IS NOT NULL AND size(n.allowedtodelegate) > 0
-RETURN labels(n)[0] AS Type, n.name AS Principal, n.domain AS Domain,
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, n.name AS Principal, n.domain AS Domain,
        n.allowedtodelegate AS DelegatesToServices
 ORDER BY Type, Domain, Principal"""
         },
@@ -156,7 +156,7 @@ ORDER BY Type, Domain, Principal"""
             "name": "RBCD — AllowedToAct",
             "description": "Objects configured with Resource-Based Constrained Delegation",
             "cypher": """MATCH p=(n)-[:AllowedToAct]->(c:Computer)
-RETURN n.name AS DelegatePrincipal, labels(n)[0] AS Type,
+RETURN n.name AS DelegatePrincipal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS TargetComputer, c.domain AS Domain
 ORDER BY Domain, TargetComputer"""
         },
@@ -179,7 +179,7 @@ ORDER BY Domain, User"""
             "name": "DCSync Rights",
             "description": "Principals with GetChanges+GetChangesAll on a Domain — instant NTDS dump",
             "cypher": """MATCH (n)-[:DCSync|GetChanges|GetChangesAll]->(d:Domain)
-RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        d.name AS Domain
 ORDER BY Domain, Principal"""
         },
@@ -189,7 +189,7 @@ ORDER BY Domain, Principal"""
             "description": "Full control over user objects — reset pw, shadow creds, SPN add",
             "cypher": """MATCH p=(n)-[:GenericAll]->(u:User)
 WHERE u.enabled = true
-RETURN coalesce(n.name, n.objectid) AS Controller, labels(n)[0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        u.name AS TargetUser, u.admincount AS IsAdmin
 ORDER BY u.admincount DESC, TargetUser"""
         },
@@ -199,7 +199,7 @@ ORDER BY u.admincount DESC, TargetUser"""
             "description": "Full control over computer objects — RBCD write, shadow creds",
             "cypher": """MATCH p=(n)-[:GenericAll]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        c.name AS TargetComputer, c.domain AS Domain
 ORDER BY Domain, TargetComputer"""
         },
@@ -209,7 +209,7 @@ ORDER BY Domain, TargetComputer"""
             "description": "Full control over high-value groups — add yourself as member",
             "cypher": """MATCH p=(n)-[:GenericAll]->(g:Group)
 WHERE g.admincount = true
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        g.name AS TargetGroup
 ORDER BY TargetGroup, Controller"""
         },
@@ -219,7 +219,7 @@ ORDER BY TargetGroup, Controller"""
             "description": "Who can add principals to DA/EA/Backup Ops etc.",
             "cypher": """MATCH p=(n)-[:AddMember|GenericAll|GenericWrite]->(g:Group)
 WHERE g.name =~ '(?i)(domain admins|enterprise admins|schema admins|administrators|backup operators|account operators|dnsadmins)@.*'
-RETURN coalesce(n.name, n.objectid) AS Controller, labels(n)[0] AS ControllerType, g.name AS Group
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType, g.name AS Group
 ORDER BY Group, Controller"""
         },
         {
@@ -227,7 +227,7 @@ ORDER BY Group, Controller"""
             "name": "WriteDACL / WriteOwner / Owns on Domain",
             "description": "Principals that can modify domain ACL — path to granting DCSync",
             "cypher": """MATCH p=(n)-[r:WriteDacl|WriteOwner|Owns|GenericAll]->(d:Domain)
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        type(r) AS Right, d.name AS Domain
 ORDER BY Domain, Principal"""
         },
@@ -237,7 +237,7 @@ ORDER BY Domain, Principal"""
             "description": "Who can force password reset — no current pw needed",
             "cypher": """MATCH p=(n)-[:ForceChangePassword]->(u:User)
 WHERE u.enabled = true
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        u.name AS TargetUser, u.admincount AS IsAdmin
 ORDER BY u.admincount DESC, TargetUser"""
         },
@@ -247,8 +247,8 @@ ORDER BY u.admincount DESC, TargetUser"""
             "description": "AddKeyCredentialLink / GenericWrite on users/computers — add msDS-KeyCredentialLink",
             "cypher": """MATCH p=(n)-[:AddKeyCredentialLink|GenericWrite|GenericAll]->(t)
 WHERE (t:User OR t:Computer) AND t.enabled = true
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
-       t.name AS Target, labels(t)[0] AS TargetType
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+       t.name AS Target, [lbl IN labels(t) WHERE lbl <> 'Base'][0] AS TargetType
 ORDER BY TargetType, Target"""
         },
         {
@@ -256,8 +256,8 @@ ORDER BY TargetType, Target"""
             "name": "AllExtendedRights",
             "description": "Grants all extended rights including GetChanges+GetChangesAll, ForceChangePw",
             "cypher": """MATCH p=(n)-[:AllExtendedRights]->(t)
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
-       t.name AS Target, labels(t)[0] AS TargetType
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+       t.name AS Target, [lbl IN labels(t) WHERE lbl <> 'Base'][0] AS TargetType
 ORDER BY TargetType, Target"""
         },
         {
@@ -265,7 +265,7 @@ ORDER BY TargetType, Target"""
             "name": "Write Access to GPOs",
             "description": "Who can modify GPOs — potential mass lateral movement via computer startup scripts",
             "cypher": """MATCH p=(n)-[:GenericAll|GenericWrite|WriteOwner|WriteDacl]->(g:GPO)
-RETURN n.name AS Controller, labels(n)[0] AS ControllerType,
+RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        g.name AS GPO, g.domain AS Domain
 ORDER BY Domain, GPO"""
         },
@@ -274,7 +274,7 @@ ORDER BY Domain, GPO"""
             "name": "LAPS Password Readers",
             "description": "Who can read LAPS managed local admin passwords",
             "cypher": """MATCH p=(n)-[:ReadLAPSPassword]->(c:Computer)
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -299,7 +299,7 @@ ORDER BY Domain, Template"""
             "name": "ESC4 — Template Write Access",
             "description": "Principals with write rights over certificate templates — modify to create ESC1",
             "cypher": """MATCH p=(n)-[:GenericAll|GenericWrite|WriteDacl|WriteOwner|Owns]->(t:CertTemplate)
-RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type, t.name AS Template
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, t.name AS Template
 ORDER BY Template, Principal"""
         },
         {
@@ -307,8 +307,8 @@ ORDER BY Template, Principal"""
             "name": "ManageCA / ManageCertificates Rights",
             "description": "Who has Officer/Manager rights over Certificate Authorities",
             "cypher": """MATCH p=(n)-[:ManageCA|ManageCertificates]->(ca:EnterpriseCA)
-RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
-       coalesce(ca.name, ca.objectid) AS CertAuthority, labels(ca)[0] AS CAType
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+       coalesce(ca.name, ca.objectid) AS CertAuthority, [lbl IN labels(ca) WHERE lbl <> 'Base'][0] AS CAType
 ORDER BY CertAuthority, Principal"""
         },
         {
@@ -316,7 +316,7 @@ ORDER BY CertAuthority, Principal"""
             "name": "Certificate Enrollment Rights",
             "description": "Who has Enroll permissions on certificate templates",
             "cypher": """MATCH p=(n)-[:Enroll]->(t:CertTemplate)
-RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        t.name AS Template, t.domain AS Domain
 ORDER BY Domain, Template"""
         },
@@ -325,7 +325,7 @@ ORDER BY Domain, Template"""
             "name": "PKI Flag Write Access",
             "description": "WritePKIEnrollmentFlag / WritePKINameFlag — ESC6/ESC3 variant indicators",
             "cypher": """MATCH p=(n)-[:WritePKIEnrollmentFlag|WritePKINameFlag]->(t:CertTemplate)
-RETURN coalesce(n.name, n.objectid) AS Principal, labels(n)[0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        type(relationships(p)[0]) AS Right, t.name AS Template
 ORDER BY Template, Principal"""
         },
@@ -338,7 +338,7 @@ ORDER BY Template, Principal"""
             "description": "Complete local admin map — who can admin where",
             "cypher": """MATCH p=(n)-[:AdminTo]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain, c.operatingsystem AS OS
 ORDER BY Domain, Computer, Principal"""
         },
@@ -348,7 +348,7 @@ ORDER BY Domain, Computer, Principal"""
             "description": "Users/groups with the most local admin rights across the environment",
             "cypher": """MATCH (u)-[:AdminTo|MemberOf*1..]->(c:Computer)
 WHERE (u:User OR u:Group) AND c.enabled = true
-RETURN u.name AS Principal, labels(u)[0] AS Type,
+RETURN u.name AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
        count(DISTINCT c) AS AdminCount
 ORDER BY AdminCount DESC
 LIMIT 30"""
@@ -370,7 +370,7 @@ ORDER BY Domain, Computer"""
             "description": "All CanRDP edges — lateral movement via Remote Desktop",
             "cypher": """MATCH p=(n)-[:CanRDP]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -380,7 +380,7 @@ ORDER BY Domain, Computer"""
             "description": "Who can PSRemote to which computers",
             "cypher": """MATCH p=(n)-[:CanPSRemote]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -390,7 +390,7 @@ ORDER BY Domain, Computer"""
             "description": "ExecuteDCOM edges — lateral movement via DCOM",
             "cypher": """MATCH p=(n)-[:ExecuteDCOM]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -409,7 +409,7 @@ ORDER BY Domain, Computer"""
             "name": "SQL Admin Rights",
             "description": "Principals with SQLAdmin access to computers running SQL Server",
             "cypher": """MATCH p=(n)-[:SQLAdmin]->(c:Computer)
-RETURN n.name AS Principal, labels(n)[0] AS Type,
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS SQLServer, c.domain AS Domain
 ORDER BY Domain, SQLServer"""
         },
@@ -422,7 +422,7 @@ ORDER BY Domain, SQLServer"""
             "description": "All nodes marked as owned in this engagement",
             "cypher": """MATCH (n)
 WHERE n.owned = true
-RETURN labels(n)[0] AS Type, n.name AS Name, n.domain AS Domain
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, n.name AS Name, n.domain AS Domain
 ORDER BY Type, Domain, Name"""
         },
         {
@@ -431,7 +431,7 @@ ORDER BY Type, Domain, Name"""
             "description": "Shortest paths from owned objects to DA — your attack chain",
             "cypher": """MATCH p=shortestPath((o)-[*1..10]->(g:Group))
 WHERE o.owned = true AND g.name =~ '(?i)domain admins@.*'
-RETURN o.name AS OwnedNode, labels(o)[0] AS Type,
+RETURN o.name AS OwnedNode, [lbl IN labels(o) WHERE lbl <> 'Base'][0] AS Type,
        g.domain AS TargetDomain, length(p) AS Hops
 ORDER BY Hops, OwnedNode
 LIMIT 50"""
@@ -443,8 +443,8 @@ LIMIT 50"""
             "cypher": """MATCH p=shortestPath((n)-[*1..8]->(hvt))
 WHERE hvt.highvalue = true AND n <> hvt AND NOT n.highvalue = true
   AND NOT n:Domain
-RETURN n.name AS Source, labels(n)[0] AS SrcType,
-       hvt.name AS HVT, labels(hvt)[0] AS HVTType, length(p) AS Hops
+RETURN n.name AS Source, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SrcType,
+       hvt.name AS HVT, [lbl IN labels(hvt) WHERE lbl <> 'Base'][0] AS HVTType, length(p) AS Hops
 ORDER BY Hops, HVT
 LIMIT 50"""
         },
@@ -475,9 +475,37 @@ ORDER BY UserDomain, GroupDomain"""
             "name": "SID History Entries",
             "description": "Users with SIDHistory — can impersonate other domain principals",
             "cypher": """MATCH p=(u)-[:HasSIDHistory]->(n)
-RETURN u.name AS Principal, labels(u)[0] AS Type,
-       n.name AS HistorySID, labels(n)[0] AS SIDType
+RETURN u.name AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
+       n.name AS HistorySID, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SIDType
 ORDER BY Type, Principal"""
+        },
+    ],
+
+    "Hierarchy": [
+        {
+            "id": "container_hierarchy",
+            "name": "Container & OU Hierarchy",
+            "description": "Domain → Containers → OUs → Users/Computers/Groups/GPOs (use the Containers sidebar button to render as a tree)",
+            "cypher": """MATCH (parent)-[:Contains]->(child)
+WHERE (parent:Domain OR parent:Container OR parent:OU)
+  AND (child:Container OR child:OU OR child:User OR child:Computer
+       OR child:Group OR child:GPO)
+RETURN coalesce(parent.objectid, parent.name) AS parentId,
+       parent.name AS parentName,
+       [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
+       coalesce(child.objectid, child.name) AS childId,
+       child.name AS childName,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
+       child.enabled AS childEnabled
+ORDER BY parentName, childName"""
+        },
+        {
+            "id": "containers_per_domain",
+            "name": "Container counts per domain",
+            "description": "How many Containers and OUs each domain has",
+            "cypher": """MATCH (n) WHERE (n:Container OR n:OU) AND n.domain IS NOT NULL
+RETURN n.domain AS Domain, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, count(n) AS Count
+ORDER BY Domain, Type"""
         },
     ],
 
@@ -487,8 +515,8 @@ ORDER BY Type, Principal"""
             "name": "Environment Overview",
             "description": "High-level object counts — understand the scope",
             "cypher": """MATCH (n)
-WHERE labels(n)[0] IS NOT NULL
-RETURN labels(n)[0] AS ObjectType, count(n) AS Count
+WHERE [lbl IN labels(n) WHERE lbl <> 'Base'][0] IS NOT NULL
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ObjectType, count(n) AS Count
 ORDER BY Count DESC"""
         },
         {
@@ -531,7 +559,7 @@ ORDER BY Count DESC"""
             "description": "What percentage of users/computers are owned",
             "cypher": """MATCH (n)
 WHERE n:User OR n:Computer
-WITH labels(n)[0] AS Type, count(n) AS Total,
+WITH [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, count(n) AS Total,
      sum(CASE WHEN n.owned = true THEN 1 ELSE 0 END) AS Owned
 RETURN Type, Total, Owned,
        round(100.0 * Owned / Total, 1) AS PctOwned
@@ -556,7 +584,7 @@ ORDER BY u.admincount DESC, User"""
 WHERE n.description IS NOT NULL
   AND n.description <> ''
   AND (n:User OR n:Computer OR n:Group)
-RETURN labels(n)[0] AS Type, n.name AS Name,
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, n.name AS Name,
        n.domain AS Domain, n.description AS Description
 ORDER BY Type, Name
 LIMIT 100"""

@@ -660,6 +660,81 @@
     color: var(--text3);
     gap: 12px;
   }
+
+  /* Container / OU hierarchy tree */
+  .tree-root { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; padding: 10px 14px; line-height: 1.45; }
+  .tree-root ul { list-style: none; padding-left: 22px; margin: 0; border-left: 1px dashed var(--border); }
+  .tree-root > ul { padding-left: 0; border-left: none; }
+  .tree-root li { padding: 0; margin: 0; position: relative; }
+  /* Connector tick from the vertical guide to each row */
+  .tree-root ul li::before {
+    content: ''; position: absolute; left: -22px; top: 14px; width: 18px;
+    border-top: 1px dashed var(--border);
+  }
+  .tree-root > ul > li::before { display: none; }
+
+  /* Unified row layout — branches and leaves share the same box model so
+     marker / badge / name columns line up perfectly across both. */
+  .tree-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 8px; border-radius: 3px; box-sizing: border-box;
+  }
+  .tree-row:hover { background: rgba(255,255,255,.03); }
+
+  /* Marker slot — same dimensions whether it's the branch chevron or the
+     leaf dot — so everything after lines up. */
+  .tree-marker {
+    flex: 0 0 14px; width: 14px; min-width: 14px; max-width: 14px;
+    height: 14px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; line-height: 1; text-align: center; color: var(--text2);
+  }
+  .tree-marker-branch::before { content: '▸'; display: inline-block; transition: transform 0.12s ease; }
+  .tree-branch[open] > summary .tree-marker-branch::before { transform: rotate(90deg); }
+  .tree-marker-leaf { font-size: 13px; color: var(--text3); opacity: 0.6; }
+
+  /* Native <summary> reset so it doesn't add browser-default padding/markers. */
+  .tree-branch > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    padding: 0; margin: 0; display: block;
+  }
+  .tree-branch > summary::-webkit-details-marker { display: none; }
+  .tree-branch > summary:hover .tree-row { background: rgba(100,255,218,.06); }
+  .tree-branch { padding: 0; margin: 0; }
+  .tree-badge {
+    font-size: 9.5px; padding: 2px 7px; border-radius: 3px; color: #0a0a0a;
+    font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    flex-shrink: 0; min-width: 38px; text-align: center;
+  }
+  .tree-badge-member { min-width: 90px; }
+  .tree-name { cursor: pointer; }
+  .tree-name:hover { color: var(--cyan); text-decoration: underline; }
+  .tree-dup { color: var(--text3); font-style: italic; }
+  .tree-disabled { color: var(--red); margin-right: 4px; }
+  .tree-count {
+    color: var(--text3); font-size: 10px; margin-left: 4px;
+    padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;
+  }
+  .tree-branch-name { cursor: pointer; }
+  .tree-branch-name:hover { color: var(--cyan); }
+  .tree-info {
+    margin-left: 6px; color: var(--text3); font-size: 12px; cursor: pointer;
+    padding: 0 4px; border-radius: 2px;
+  }
+  .tree-info:hover { color: var(--cyan); background: rgba(100,255,218,.08); }
+  .tree-empty { color: var(--text3); font-size: 10px; font-style: italic; margin-left: 8px; letter-spacing: 0.2px; }
+  .tree-controls {
+    padding: 0 0 14px; margin-bottom: 8px; display: flex; gap: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .tree-ctrl-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text2);
+    font-family: inherit; font-size: 10px; padding: 5px 12px; cursor: pointer;
+    letter-spacing: 0.08em; border-radius: 2px; transition: color .12s, border-color .12s, background .12s;
+    text-transform: uppercase;
+  }
+  .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(100,255,218,.05); }
+  .tree-hit > .tree-row .tree-name,
+  .tree-hit > details > summary .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
   .empty-icon {
     font-size: 48px;
     opacity: .3;
@@ -1095,6 +1170,7 @@
       <button class="obj-btn" id="btn-computers" onclick="showObjectStats('Computer')">Computers</button>
       <button class="obj-btn" id="btn-groups" onclick="showObjectStats('Group')">Groups</button>
       <button class="obj-btn" id="btn-domains" onclick="showObjectStats('Domain')">Domains</button>
+      <button class="obj-btn" id="btn-containers" onclick="showContainerTree()">Containers</button>
     </div>
 
     <div class="sidebar-scroll" id="queryNav"></div>
@@ -1712,6 +1788,11 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function escAttr(s) {
+  // For HTML attribute values — also escapes double-quotes.
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function showEmpty() {
   document.getElementById('resultsScroll').innerHTML = `
     <div class="empty-state">
@@ -1734,6 +1815,9 @@ function showError(msg, scrollId) {
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 function filterTable(val) {
+  // Tree view path: container-tree renders into #resultsScroll without a table.
+  const tree = document.querySelector('#resultsScroll .tree-root');
+  if (tree) return filterTreeView(tree, val);
   const tbl = document.querySelector('#resultsScroll table');
   if (!tbl) return;
   const q = val.toLowerCase();
@@ -1745,6 +1829,68 @@ function filterTable(val) {
   });
   const countEl = document.getElementById('resultCount');
   if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
+}
+
+function filterTreeView(root, val) {
+  const q = (val || '').trim().toLowerCase();
+  // Reset: clear hide flags and let collapsed branches stay collapsed.
+  const allItems = root.querySelectorAll('li');
+  if (!q) {
+    allItems.forEach(li => { li.style.display = ''; li.classList.remove('tree-hit'); });
+    // Also collapse the open-by-filter branches we may have force-opened.
+    root.querySelectorAll('details[data-filter-opened]').forEach(d => {
+      d.open = d.dataset.filterPrev === '1';
+      delete d.dataset.filterOpened;
+      delete d.dataset.filterPrev;
+    });
+    const cEl = document.getElementById('resultCount');
+    if (cEl && window._treeCountHTML) cEl.innerHTML = window._treeCountHTML;
+    return;
+  }
+  // 1. Match on the li's data-search blob (full name + DN + objectid),
+  // lowercased once at render time. Filtering by partial DN now works.
+  let hits = 0;
+  allItems.forEach(li => {
+    const blob = li.dataset.search || '';
+    const hit = blob.includes(q);
+    li.classList.toggle('tree-hit', hit);
+    if (hit) hits++;
+  });
+  // 2. Show an li if it matches, has a matching descendant, OR has a
+  // matching ancestor. The third case is critical: when you filter for a
+  // container's DN, you expect to expand it and see what's inside — its
+  // children's individual DNs/names won't contain the container's DN
+  // (and synthetic well-known nodes have no DN at all).
+  const hasAncestorHit = (li) => {
+    let p = li.parentElement;
+    while (p && p !== root) {
+      if (p.tagName === 'LI' && p.classList.contains('tree-hit')) return true;
+      p = p.parentElement;
+    }
+    return false;
+  };
+  allItems.forEach(li => {
+    const show = li.classList.contains('tree-hit') ||
+                 li.querySelector('.tree-hit') !== null ||
+                 hasAncestorHit(li);
+    li.style.display = show ? '' : 'none';
+  });
+  // 3. Force-open every <details> ancestor of a hit so matches are visible.
+  root.querySelectorAll('.tree-hit').forEach(li => {
+    let p = li.parentElement;
+    while (p && p !== root) {
+      if (p.tagName === 'DETAILS' && !p.open) {
+        if (!p.dataset.filterOpened) {
+          p.dataset.filterOpened = '1';
+          p.dataset.filterPrev = '0';
+        }
+        p.open = true;
+      }
+      p = p.parentElement;
+    }
+  });
+  const cEl = document.getElementById('resultCount');
+  if (cEl) cEl.innerHTML = `MATCHES: <span>${hits.toLocaleString()}</span> — filter: <span style="color:var(--cyan)">${escHtml(val)}</span>`;
 }
 
 function filterCustomTable(val) {
@@ -1864,6 +2010,43 @@ function _ctxIdent(row) {
       return { type: 'name', val: v };
   }
   return null;
+}
+
+async function ctxOpenInVisualizer() {
+  hideCtxMenu();
+  const row = _ctxRow();
+  if (!row) return;
+  // Priority: objectid (most unique, always matches if node is in the tree),
+  // then DN, then name. Each row may have any subset of these.
+  let filter = '';
+  const oid = row.objectid || row.ObjectID || row.GUID;
+  if (oid && typeof oid === 'string') filter = oid;
+  if (!filter) {
+    for (const v of Object.values(row)) {
+      if (v && typeof v === 'string' && /^(CN|OU|DC)=/i.test(v)) { filter = v; break; }
+    }
+  }
+  if (!filter) {
+    const ident = _ctxIdent(row);
+    if (ident) filter = ident.val;
+  }
+  if (!filter) return toast('Cannot identify node', 'err');
+  await showContainerTree();
+  const fb = document.getElementById('filterBox');
+  if (fb) {
+    fb.value = filter;
+    fb.dispatchEvent(new Event('input'));
+    // Scroll the first hit into view; toast if nothing matched (object is
+    // not in the Contains tree — e.g. a Group with no parent container).
+    setTimeout(() => {
+      const hit = document.querySelector('#resultsScroll .tree-hit');
+      if (hit) {
+        hit.scrollIntoView({block: 'center', behavior: 'smooth'});
+      } else {
+        toast('Not in Contains tree (orphan node)', 'err');
+      }
+    }, 150);
+  }
 }
 
 async function ctxMarkOwned() {
@@ -2163,8 +2346,8 @@ async function showObjectStats(objectType) {
       : `MATCH (n:Computer) WHERE n.name IS NOT NULL RETURN n.name AS DNS_Name, n.description AS Description, n.domain AS Domain, coalesce(n.distinguishedname, '') AS OU, n.operatingsystem AS Operating_System, n.enabled AS Enabled, n.lastlogon AS LastLogon, n.serviceprincipalnames AS SPNs ORDER BY DNS_Name`;
   } else if (objectType === 'Group') {
     cypher = hasDomain
-      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
-      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
+      ? `MATCH (n:Group) WHERE n.domain = $domain OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`
+      : `MATCH (n:Group) OPTIONAL MATCH (m)-[:MemberOf*1..]->(n) RETURN n.name AS Group_Name, n.domain AS Domain, n.admincount AS AdminCount, n.description AS Description, count(DISTINCT m) AS Member_Count, coalesce(n.distinguishedname, '') AS DN, n.objectid AS objectid ORDER BY n.admincount DESC, Member_Count DESC, Group_Name`;
   } else if (objectType === 'Domain') {
     cypher = 'MATCH (n) WHERE n.domain IS NOT NULL RETURN DISTINCT n.domain AS Domain, count(n) AS Object_Count ORDER BY Domain';
   }
@@ -2199,6 +2382,241 @@ async function showObjectStats(objectType) {
 
   btn.textContent = originalText;
   btn.disabled = false;
+}
+
+// ── Container / OU Hierarchy Tree ──────────────────────────────────────────
+async function showContainerTree() {
+  document.querySelectorAll('.obj-btn').forEach(btn => btn.classList.remove('active'));
+  const btn = document.getElementById('btn-containers');
+  btn.classList.add('active');
+
+  const domain = document.getElementById('domainSelect').value;
+  const hasDomain = domain !== 'all';
+
+  // Query: each parent->child Contains edge. Filter by domain on the parent
+  // side so we keep the tree rooted in that domain (children that live in a
+  // different home domain via cross-domain FSPs are kept — they show up as
+  // leaves inside e.g. ForeignSecurityPrincipals).
+  // [lbl IN labels(...) WHERE lbl <> 'Base'][0] skips the universal :Base
+  // label so the badge reflects the real AD type (User/Computer/Group/etc.).
+  // distinguishedname is included so the filter can match by full DN.
+  //
+  // Two parent→child relationships are unioned together:
+  //   • Contains — the AD object-tree structure (Domain → OU/Container → leaf)
+  //   • MemberOf (reversed) — group memberships (Group → its User/Group/Computer
+  //     members). This lets you expand a Group node in the tree and see what's
+  //     inside it.
+  const domainFilter = hasDomain ? 'AND parent.domain = $domain ' : '';
+  const memberDomainFilter = hasDomain ? 'WHERE g.domain = $domain ' : '';
+  const cypher = `
+CALL {
+  MATCH (parent)-[:Contains]->(child)
+  WHERE (parent:Domain OR parent:Container OR parent:OU)
+    ${domainFilter}AND (child:Container OR child:OU OR child:User OR child:Computer OR child:Group OR child:GPO)
+  RETURN parent, child, 'Contains' AS edgeType
+  UNION
+  MATCH (member)-[:MemberOf]->(g:Group)
+  ${memberDomainFilter}RETURN g AS parent, member AS child, 'MemberOf' AS edgeType
+}
+RETURN coalesce(parent.objectid, parent.name) AS parentId,
+       parent.name AS parentName,
+       [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
+       parent.distinguishedname AS parentDN,
+       coalesce(child.objectid, child.name) AS childId,
+       child.name AS childName,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
+       child.distinguishedname AS childDN,
+       child.enabled AS childEnabled,
+       edgeType
+ORDER BY parentName, childName`;
+  const params = hasDomain ? {domain} : {};
+
+  const originalText = btn.textContent;
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+
+  try {
+    const r = await apiFetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cypher, params})
+    });
+    const d = await r.json();
+
+    if (d.success) {
+      lastResultData = null; // tree view bypasses the cached-table redraw path
+      renderContainerTree(d.data, 'resultsScroll', 'resultsToolbar', 'resultCount');
+      showTab('results');
+      document.getElementById('qTitle').textContent = 'CONTAINER & OU HIERARCHY';
+      document.getElementById('qDesc').textContent = hasDomain
+        ? `AD tree for ${domain} — click a node for details`
+        : 'AD tree across all domains — click a node for details';
+      document.getElementById('cypherInput').value = cypher;
+      document.getElementById('queryPanel').style.display = '';
+    } else {
+      showError(d.error, 'resultsScroll');
+    }
+  } catch(e) {
+    showError(e.message, 'resultsScroll');
+  }
+
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
+
+function renderContainerTree(rows, scrollId, toolbarId, countId) {
+  const scroll = document.getElementById(scrollId);
+  const toolbar = document.getElementById(toolbarId);
+  const countEl = document.getElementById(countId);
+
+  if (!rows || rows.length === 0) {
+    scroll.innerHTML = `<div class="empty-state fade-in">
+      <div class="empty-icon">🌲</div>
+      <div class="empty-text">NO HIERARCHY DATA</div>
+      <div class="empty-sub">No Contains edges found — re-upload the BH zip</div>
+    </div>`;
+    toolbar.style.display = 'none';
+    return;
+  }
+
+  // Index rows: parentId → [{id, name, type, dn, enabled, edgeType}], and
+  // remember every node we see (parent or child) so we can resolve names +
+  // find roots. edgeType distinguishes Contains (object-tree) from MemberOf
+  // (group memberships) so the badge can read "Member(User)" / "Member(Group)"
+  // for the latter.
+  const childrenByParent = new Map();
+  const nodes = new Map(); // id → {id, name, type, dn, enabled}
+  const seenAsChild = new Set();
+  for (const r of rows) {
+    const p = {id: r.parentId, name: r.parentName, type: r.parentType, dn: r.parentDN, enabled: null};
+    const c = {id: r.childId, name: r.childName, type: r.childType, dn: r.childDN, enabled: r.childEnabled, edgeType: r.edgeType || 'Contains'};
+    if (!nodes.has(p.id)) nodes.set(p.id, p);
+    if (!nodes.has(c.id)) nodes.set(c.id, c);
+    if (!childrenByParent.has(p.id)) childrenByParent.set(p.id, []);
+    childrenByParent.get(p.id).push(c);
+    seenAsChild.add(c.id);
+  }
+
+  // Roots = nodes that are parents but never appear as a child (typically Domain).
+  // Sort: Domains first, then by name.
+  const roots = [...childrenByParent.keys()]
+    .filter(id => !seenAsChild.has(id))
+    .map(id => nodes.get(id))
+    .sort((a, b) => {
+      if (a.type === 'Domain' && b.type !== 'Domain') return -1;
+      if (b.type === 'Domain' && a.type !== 'Domain') return 1;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+  // Build a synthetic table-rows registry so showObjectDetails(treeId, idx) works.
+  window._tableRows = window._tableRows || {};
+  const detailsRows = [];
+
+  function nodeRow(n) {
+    // The details modal scans values for SIDs and types — feed it both.
+    // DN is included so ctx menu "Open in Visualizer" can re-filter by DN.
+    const r = {Name: n.name, Type: n.type, objectid: n.id};
+    if (n.dn) r.DistinguishedName = n.dn;
+    return r;
+  }
+
+  function shortName(name) {
+    if (!name) return '(unnamed)';
+    const at = name.indexOf('@');
+    return at > 0 ? name.slice(0, at) : name;
+  }
+
+  // Type → badge color (matches existing renderCell palette).
+  const typeColor = {
+    User: 'var(--green)', Computer: 'var(--orange)', Group: '#c084fc',
+    GPO: 'var(--cyan)', OU: 'var(--yellow)', Container: 'var(--text2)',
+    Domain: '#a3e635',
+  };
+
+  let counts = {Container: 0, OU: 0, User: 0, Computer: 0, Group: 0, GPO: 0, Domain: 0};
+  const visited = new Set();
+  const MAX_DEPTH = 64; // belt-and-braces cycle guard
+
+  function searchBlob(node) {
+    // Lowercased haystack the filter searches against — full name, DN, objectid.
+    return [node.name, node.dn, node.id].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function renderNode(node, depth, openByDefault) {
+    const search = escAttr(searchBlob(node));
+    if (visited.has(node.id) || depth > MAX_DEPTH) {
+      // Cycle or runaway recursion — render as a leaf reference.
+      return `<li class="tree-leaf" data-search="${search}"><span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span><span class="tree-name tree-dup">${escHtml(shortName(node.name))}</span></li>`;
+    }
+    visited.add(node.id);
+    if (counts[node.type] !== undefined) counts[node.type]++;
+
+    const idx = detailsRows.length;
+    detailsRows.push(nodeRow(node));
+
+    const kids = childrenByParent.get(node.id) || [];
+    kids.sort((a, b) => {
+      // Containers/OUs first, then by name
+      const rank = (t) => (t === 'Container' || t === 'OU') ? 0 : 1;
+      const ra = rank(a.type), rb = rank(b.type);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+    const isMember = node.edgeType === 'MemberOf';
+    const badgeText = isMember ? `Member(${node.type||'?'})` : (node.type || '?');
+    const badgeBg = isMember ? '#94a3b8' : (typeColor[node.type] || 'var(--text2)');
+    const badge = `<span class="tree-badge${isMember ? ' tree-badge-member' : ''}" style="background:${badgeBg}">${escHtml(badgeText)}</span>`;
+    const enabledMark = (node.enabled === false) ? '<span class="tree-disabled" title="disabled">⊘</span>' : '';
+
+    if (kids.length === 0) {
+      visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
+      // Container-type leaves (OU/Container with no children) get an "(empty)"
+      // marker so the tree doesn't mislead the eye into thinking they're nested
+      // under the row above.
+      const isContainerLike = node.type === 'OU' || node.type === 'Container';
+      const emptyHint = isContainerLike ? '<span class="tree-empty">(empty)</span>' : '';
+      const leafRow = `<div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">·</span>${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>${emptyHint}</div>`;
+      return `<li data-search="${search}">${leafRow}</li>`;
+    }
+    // Branch: clicking the name should toggle expand/collapse (native <summary>
+    // behavior). The details modal is reachable via right-click or the ⓘ icon.
+    const branchName = `${badge}${enabledMark}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click to expand / Right-click for details">${escHtml(shortName(node.name))}</span>`;
+    const detailsIcon = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
+    // Expand depth 0-1 by default; deeper levels collapsed.
+    const openAttr = openByDefault ? ' open' : '';
+    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
+    for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
+    html += `</ul></details></li>`;
+    visited.delete(node.id);
+    return html;
+  }
+
+  let html = `<div class="tree-root">
+    <div class="tree-controls">
+      <button class="tree-ctrl-btn" onclick="treeExpandAll(true)">▾ EXPAND ALL</button>
+      <button class="tree-ctrl-btn" onclick="treeExpandAll(false)">▸ COLLAPSE ALL</button>
+    </div>
+    <ul>`;
+  for (const r of roots) html += renderNode(r, 0, true);
+  html += `</ul></div>`;
+
+  window._tableRows['containerTree'] = detailsRows;
+
+  scroll.innerHTML = html;
+  toolbar.style.display = '';
+  const total = counts.Container + counts.OU + counts.User + counts.Computer + counts.Group + counts.GPO + counts.Domain;
+  const countHTML = `NODES: <span>${total.toLocaleString()}</span> · containers <span>${counts.Container}</span> · OUs <span>${counts.OU}</span> · users <span>${counts.User}</span> · computers <span>${counts.Computer}</span> · groups <span>${counts.Group}</span> · GPOs <span>${counts.GPO}</span>`;
+  countEl.innerHTML = countHTML;
+  // Stash so filter-clear can restore it without recomputing.
+  window._treeCountHTML = countHTML;
+  // Reset any leftover filter value from a previous view.
+  const fb = document.getElementById('filterBox');
+  if (fb) fb.value = '';
+}
+
+function treeExpandAll(open) {
+  document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => { d.open = !!open; });
 }
 
 // ── Object Details Panel ───────────────────────────────────────────────────
@@ -2316,7 +2734,7 @@ async function showObjectDetails(tableId, rowIndex) {
       const typeFilter = (!lookupSid && lookupType) ? `:${lookupType}` : '';
       const [nodeRes, groupRes] = await Promise.all([
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, labels(n)[0] AS _type LIMIT 1`})
+          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS _type LIMIT 1`})
         }),
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n)-[:MemberOf]->(g:Group) WHERE ${where} RETURN g.name AS name, g.admincount AS admincount, g.domain AS domain ORDER BY g.admincount DESC, g.name`})
@@ -2654,6 +3072,8 @@ init();
 <div id="ctxMenu">
   <div class="ctx-label" id="ctxNodeLabel">NODE</div>
   <div class="ctx-separator" id="ctxSep1"></div>
+  <div class="ctx-item" id="ctxOpenInTree" onclick="ctxOpenInVisualizer()">🌲 Open in Visualizer</div>
+  <div class="ctx-separator"></div>
   <div class="ctx-item danger" id="ctxMarkOwned"     onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
   <div class="ctx-item good"   id="ctxMarkHighValue" onclick="ctxMarkHighValue()">★ Mark High Value</div>
   <div class="ctx-separator"></div>
