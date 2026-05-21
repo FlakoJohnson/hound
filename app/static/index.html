@@ -678,6 +678,13 @@
   .tree-dup { color: var(--text3); font-style: italic; }
   .tree-disabled { color: var(--red, #e57373); margin-right: 4px; }
   .tree-count { color: var(--text3); font-size: 11px; margin-left: 6px; }
+  .tree-branch-name { cursor: pointer; }
+  .tree-branch-name:hover { color: var(--cyan); }
+  .tree-info {
+    margin-left: 6px; color: var(--text3); font-size: 12px; cursor: pointer;
+    padding: 0 4px; border-radius: 2px;
+  }
+  .tree-info:hover { color: var(--cyan); background: rgba(100,255,218,.08); }
   .tree-controls { padding: 4px 0 10px; display: flex; gap: 6px; }
   .tree-ctrl-btn {
     background: transparent; border: 1px solid var(--border); color: var(--text2);
@@ -2504,15 +2511,20 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
     const badge = `<span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span>`;
     const enabledMark = (node.enabled === false) ? '<span class="tree-disabled" title="disabled">⊘</span>' : '';
-    const nameLabel = `${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})">${escHtml(shortName(node.name))}</span>`;
 
     if (kids.length === 0) {
       visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
-      return `<li class="tree-leaf" data-search="${search}">${nameLabel}</li>`;
+      // Leaf: clicking name opens details (no children to toggle anyway).
+      const leafLabel = `${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>`;
+      return `<li class="tree-leaf" data-search="${search}">${leafLabel}</li>`;
     }
+    // Branch: clicking the name should toggle expand/collapse (native <summary>
+    // behavior). The details modal is reachable via right-click or the ⓘ icon.
+    const branchName = `${badge}${enabledMark}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click to expand / Right-click for details">${escHtml(shortName(node.name))}</span>`;
+    const detailsIcon = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
     // Expand depth 0-1 by default; deeper levels collapsed.
     const openAttr = openByDefault ? ' open' : '';
-    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary>${nameLabel}<span class="tree-count">${kids.length}</span></summary><ul>`;
+    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</summary><ul>`;
     for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
     html += `</ul></details></li>`;
     visited.delete(node.id);
