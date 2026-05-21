@@ -665,25 +665,41 @@
   .tree-root { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; padding: 10px 14px; line-height: 1.45; }
   .tree-root ul { list-style: none; padding-left: 22px; margin: 0; border-left: 1px dashed var(--border); }
   .tree-root > ul { padding-left: 0; border-left: none; }
-  .tree-root li { padding: 1px 0; position: relative; }
+  .tree-root li { padding: 0; margin: 0; position: relative; }
   /* Connector tick from the vertical guide to each row */
   .tree-root ul li::before {
     content: ''; position: absolute; left: -22px; top: 14px; width: 18px;
     border-top: 1px dashed var(--border);
   }
   .tree-root > ul > li::before { display: none; }
-  .tree-branch > summary { cursor: pointer; padding: 4px 8px; border-radius: 3px; display: inline-flex; align-items: center; gap: 10px; list-style: none; user-select: none; }
-  .tree-branch > summary::-webkit-details-marker { display: none; }
-  .tree-branch > summary::before {
-    content: '▸'; color: var(--text2);
-    flex: 0 0 14px; width: 14px; min-width: 14px; max-width: 14px;
-    display: inline-block; text-align: center;
-    transition: transform 0.12s ease; font-size: 10px; line-height: 1;
+
+  /* Unified row layout — branches and leaves share the same box model so
+     marker / badge / name columns line up perfectly across both. */
+  .tree-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 8px; border-radius: 3px; box-sizing: border-box;
   }
-  .tree-branch[open] > summary::before { transform: rotate(90deg); }
-  .tree-branch > summary:hover { background: rgba(100,255,218,.06); }
-  .tree-leaf { padding: 4px 8px; display: flex; align-items: center; gap: 10px; border-radius: 3px; }
-  .tree-leaf:hover { background: rgba(255,255,255,.03); }
+  .tree-row:hover { background: rgba(255,255,255,.03); }
+
+  /* Marker slot — same dimensions whether it's the branch chevron or the
+     leaf dot — so everything after lines up. */
+  .tree-marker {
+    flex: 0 0 14px; width: 14px; min-width: 14px; max-width: 14px;
+    height: 14px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; line-height: 1; text-align: center; color: var(--text2);
+  }
+  .tree-marker-branch::before { content: '▸'; display: inline-block; transition: transform 0.12s ease; }
+  .tree-branch[open] > summary .tree-marker-branch::before { transform: rotate(90deg); }
+  .tree-marker-leaf { font-size: 13px; color: var(--text3); opacity: 0.6; }
+
+  /* Native <summary> reset so it doesn't add browser-default padding/markers. */
+  .tree-branch > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    padding: 0; margin: 0; display: block;
+  }
+  .tree-branch > summary::-webkit-details-marker { display: none; }
+  .tree-branch > summary:hover .tree-row { background: rgba(100,255,218,.06); }
+  .tree-branch { padding: 0; margin: 0; }
   .tree-badge {
     font-size: 9.5px; padding: 2px 7px; border-radius: 3px; color: #0a0a0a;
     font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
@@ -704,12 +720,6 @@
     padding: 0 4px; border-radius: 2px;
   }
   .tree-info:hover { color: var(--cyan); background: rgba(100,255,218,.08); }
-  .tree-leaf-marker {
-    color: var(--text3); opacity: 0.6;
-    flex: 0 0 14px; width: 14px; min-width: 14px; max-width: 14px;
-    display: inline-block; text-align: center;
-    font-size: 13px; line-height: 1;
-  }
   .tree-empty { color: var(--text3); font-size: 10px; font-style: italic; margin-left: 8px; letter-spacing: 0.2px; }
   .tree-controls {
     padding: 0 0 14px; margin-bottom: 8px; display: flex; gap: 6px;
@@ -722,8 +732,8 @@
     text-transform: uppercase;
   }
   .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(100,255,218,.05); }
-  .tree-hit > .tree-name,
-  .tree-hit > details > summary > .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
+  .tree-hit > .tree-row .tree-name,
+  .tree-hit > details > summary .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
   .empty-icon {
     font-size: 48px;
     opacity: .3;
@@ -2544,14 +2554,13 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
     if (kids.length === 0) {
       visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
-      // Leaf: clicking name opens details (no children to toggle anyway).
       // Container-type leaves (OU/Container with no children) get an "(empty)"
       // marker so the tree doesn't mislead the eye into thinking they're nested
       // under the row above.
       const isContainerLike = node.type === 'OU' || node.type === 'Container';
       const emptyHint = isContainerLike ? '<span class="tree-empty">(empty)</span>' : '';
-      const leafLabel = `<span class="tree-leaf-marker">·</span>${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>${emptyHint}`;
-      return `<li class="tree-leaf" data-search="${search}">${leafLabel}</li>`;
+      const leafRow = `<div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">·</span>${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>${emptyHint}</div>`;
+      return `<li data-search="${search}">${leafRow}</li>`;
     }
     // Branch: clicking the name should toggle expand/collapse (native <summary>
     // behavior). The details modal is reachable via right-click or the ⓘ icon.
@@ -2559,7 +2568,7 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     const detailsIcon = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
     // Expand depth 0-1 by default; deeper levels collapsed.
     const openAttr = openByDefault ? ' open' : '';
-    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</summary><ul>`;
+    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
     for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
     html += `</ul></details></li>`;
     visited.delete(node.id);
