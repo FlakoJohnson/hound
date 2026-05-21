@@ -82,10 +82,29 @@ FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'containe
 
 
 class BloodHoundImporter:
+    _schema_ready = False
+
     def __init__(self, driver):
         self.driver = driver
 
+    def _ensure_schema(self):
+        # Every node gets a :Base label so MERGE/MATCH-by-objectid resolves
+        # regardless of the asserted type label. Without this, a Contains/Member
+        # reference asserting ObjectType=User would create a duplicate stub
+        # alongside a real Group node that already exists with the same SID
+        # (cross-domain FSPs being the classic case).
+        if BloodHoundImporter._schema_ready:
+            return
+        try:
+            with self.driver.session() as session:
+                session.run("CREATE CONSTRAINT base_objectid IF NOT EXISTS "
+                            "FOR (n:Base) REQUIRE n.objectid IS UNIQUE")
+            BloodHoundImporter._schema_ready = True
+        except Exception as e:
+            logger.warning(f"Could not create :Base(objectid) constraint: {e}")
+
     def import_zip(self, file_obj):
+        self._ensure_schema()
         results = {'files': [], 'nodes': 0, 'relationships': 0, 'errors': []}
         try:
             data = file_obj.read() if hasattr(file_obj, 'read') else open(file_obj, 'rb').read()
@@ -197,10 +216,19 @@ class BloodHoundImporter:
                 node_data.append(clean_props)
 
             if node_data:
+                # MERGE on :Base so existing stubs (from earlier Contains/ACE refs)
+                # get the specific label added rather than a duplicate node created.
+                # REMOVE other AD-type labels first — the file we're importing is
+                # authoritative for this object's actual type (an earlier FSP
+                # Contains edge may have asserted the wrong type, e.g. User on a
+                # cross-domain Group; we shouldn't keep that leftover label).
                 query = f"""
                 UNWIND $nodes AS props
-                MERGE (n:{label} {{objectid: props.objectid}})
-                SET n += props
+                MERGE (n:Base {{objectid: props.objectid}})
+                REMOVE n:User, n:Computer, n:Group, n:GPO, n:OU, n:Container,
+                       n:Domain, n:CertTemplate, n:EnterpriseCA, n:RootCA,
+                       n:AIACA, n:NTAuthStore, n:IssuancePolicy
+                SET n:{label}, n += props
                 """
                 try:
                     session.run(query, nodes=node_data)
@@ -238,8 +266,10 @@ class BloodHoundImporter:
             inherited = ace.get('IsInherited', False)
             try:
                 session.run(f"""
-                    MERGE (src:{src_label} {{objectid: $src}})
-                    MERGE (dst:{label} {{objectid: $dst}})
+                    MERGE (src:Base {{objectid: $src}})
+                    ON CREATE SET src:{src_label}
+                    MERGE (dst:Base {{objectid: $dst}})
+                    ON CREATE SET dst:{label}
                     MERGE (src)-[r:{right}]->(dst)
                     SET r.isinherited = $inh
                 """, src=src_id, dst=obj_id, inh=inherited)
@@ -256,8 +286,10 @@ class BloodHoundImporter:
             m_label = TYPE_TO_LABEL.get(m_type.lower(), 'Base')
             try:
                 session.run(f"""
-                    MERGE (src:{m_label} {{objectid: $src}})
-                    MERGE (dst:{label} {{objectid: $dst}})
+                    MERGE (src:Base {{objectid: $src}})
+                    ON CREATE SET src:{m_label}
+                    MERGE (dst:Base {{objectid: $dst}})
+                    ON CREATE SET dst:{label}
                     MERGE (src)-[:MemberOf]->(dst)
                 """, src=m_id, dst=obj_id)
                 count += 1
@@ -269,8 +301,10 @@ class BloodHoundImporter:
         if pg:
             try:
                 session.run(f"""
-                    MERGE (src:{label} {{objectid: $src}})
-                    MERGE (dst:Group {{objectid: $dst}})
+                    MERGE (src:Base {{objectid: $src}})
+                    ON CREATE SET src:{label}
+                    MERGE (dst:Base {{objectid: $dst}})
+                    ON CREATE SET dst:Group
                     MERGE (src)-[:MemberOf {{isprimarygroup: true}}]->(dst)
                 """, src=obj_id, dst=pg)
                 count += 1
@@ -285,8 +319,10 @@ class BloodHoundImporter:
             if u_id:
                 try:
                     session.run(f"""
-                        MERGE (u:User {{objectid: $uid}})
-                        MERGE (c:{label} {{objectid: $cid}})
+                        MERGE (u:Base {{objectid: $uid}})
+                        ON CREATE SET u:User
+                        MERGE (c:Base {{objectid: $cid}})
+                        ON CREATE SET c:{label}
                         MERGE (u)-[:HasSession]->(c)
                     """, uid=u_id, cid=obj_id)
                     count += 1
@@ -311,8 +347,10 @@ class BloodHoundImporter:
                 i_label = TYPE_TO_LABEL.get(i_type.lower(), 'Base')
                 try:
                     session.run(f"""
-                        MERGE (src:{i_label} {{objectid: $src}})
-                        MERGE (dst:{label} {{objectid: $dst}})
+                        MERGE (src:Base {{objectid: $src}})
+                        ON CREATE SET src:{i_label}
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{label}
                         MERGE (src)-[:{rel}]->(dst)
                     """, src=i_id, dst=obj_id)
                     count += 1
@@ -327,8 +365,10 @@ class BloodHoundImporter:
             if d_id:
                 try:
                     session.run(f"""
-                        MERGE (src:{label} {{objectid: $src}})
-                        MERGE (dst:{d_label} {{objectid: $dst}})
+                        MERGE (src:Base {{objectid: $src}})
+                        ON CREATE SET src:{label}
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{d_label}
                         MERGE (src)-[:AllowedToDelegate]->(dst)
                     """, src=obj_id, dst=d_id)
                     count += 1
@@ -343,8 +383,10 @@ class BloodHoundImporter:
             if a_id:
                 try:
                     session.run(f"""
-                        MERGE (src:{a_label} {{objectid: $src}})
-                        MERGE (dst:{label} {{objectid: $dst}})
+                        MERGE (src:Base {{objectid: $src}})
+                        ON CREATE SET src:{a_label}
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{label}
                         MERGE (src)-[:AllowedToAct]->(dst)
                     """, src=a_id, dst=obj_id)
                     count += 1
@@ -357,8 +399,10 @@ class BloodHoundImporter:
             if t_sid:
                 try:
                     session.run("""
-                        MERGE (src:Domain {objectid: $src})
-                        MERGE (dst:Domain {objectid: $dst})
+                        MERGE (src:Base {objectid: $src})
+                        ON CREATE SET src:Domain
+                        MERGE (dst:Base {objectid: $dst})
+                        ON CREATE SET dst:Domain
                         MERGE (src)-[r:TrustedBy]->(dst)
                         SET r.trusttype = $tt, r.transitive = $tr, r.sidfiltering = $sf
                     """, src=obj_id, dst=t_sid,
@@ -376,8 +420,10 @@ class BloodHoundImporter:
             if c_id:
                 try:
                     session.run(f"""
-                        MERGE (src:{label} {{objectid: $src}})
-                        MERGE (dst:{c_label} {{objectid: $dst}})
+                        MERGE (src:Base {{objectid: $src}})
+                        ON CREATE SET src:{label}
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{c_label}
                         MERGE (src)-[:Contains]->(dst)
                     """, src=obj_id, dst=c_id)
                     count += 1
@@ -390,8 +436,10 @@ class BloodHoundImporter:
             if gpo_id:
                 try:
                     session.run(f"""
-                        MERGE (gpo:GPO {{objectid: $gpo}})
-                        MERGE (dst:{label} {{objectid: $dst}})
+                        MERGE (gpo:Base {{objectid: $gpo}})
+                        ON CREATE SET gpo:GPO
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{label}
                         MERGE (gpo)-[:GpLink]->(dst)
                     """, gpo=gpo_id, dst=obj_id)
                     count += 1
@@ -406,8 +454,10 @@ class BloodHoundImporter:
             if h_id:
                 try:
                     session.run(f"""
-                        MERGE (src:{label} {{objectid: $src}})
-                        MERGE (dst:{h_label} {{objectid: $dst}})
+                        MERGE (src:Base {{objectid: $src}})
+                        ON CREATE SET src:{label}
+                        MERGE (dst:Base {{objectid: $dst}})
+                        ON CREATE SET dst:{h_label}
                         MERGE (src)-[:HasSIDHistory]->(dst)
                     """, src=obj_id, dst=h_id)
                     count += 1
@@ -425,8 +475,10 @@ class BloodHoundImporter:
                 if t_id:
                     try:
                         session.run(f"""
-                            MERGE (src:{label} {{objectid: $src}})
-                            MERGE (dst:{t_label} {{objectid: $dst}})
+                            MERGE (src:Base {{objectid: $src}})
+                            ON CREATE SET src:{label}
+                            MERGE (dst:Base {{objectid: $dst}})
+                            ON CREATE SET dst:{t_label}
                             MERGE (src)-[:{rel}]->(dst)
                         """, src=obj_id, dst=t_id)
                         count += 1

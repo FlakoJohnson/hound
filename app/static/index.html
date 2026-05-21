@@ -2233,6 +2233,8 @@ async function showContainerTree() {
   // side so we keep the tree rooted in that domain (children that live in a
   // different home domain via cross-domain FSPs are kept — they show up as
   // leaves inside e.g. ForeignSecurityPrincipals).
+  // [lbl IN labels(...) WHERE lbl <> 'Base'][0] skips the universal :Base
+  // label so the badge reflects the real AD type (User/Computer/Group/etc.).
   const cypher = hasDomain
     ? `MATCH (parent)-[:Contains]->(child)
 WHERE (parent:Domain OR parent:Container OR parent:OU)
@@ -2240,10 +2242,10 @@ WHERE (parent:Domain OR parent:Container OR parent:OU)
   AND (child:Container OR child:OU OR child:User OR child:Computer OR child:Group OR child:GPO)
 RETURN coalesce(parent.objectid, parent.name) AS parentId,
        parent.name AS parentName,
-       labels(parent)[0] AS parentType,
+       [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
        coalesce(child.objectid, child.name) AS childId,
        child.name AS childName,
-       labels(child)[0] AS childType,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
        child.enabled AS childEnabled
 ORDER BY parentName, childName`
     : `MATCH (parent)-[:Contains]->(child)
@@ -2251,10 +2253,10 @@ WHERE (parent:Domain OR parent:Container OR parent:OU)
   AND (child:Container OR child:OU OR child:User OR child:Computer OR child:Group OR child:GPO)
 RETURN coalesce(parent.objectid, parent.name) AS parentId,
        parent.name AS parentName,
-       labels(parent)[0] AS parentType,
+       [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
        coalesce(child.objectid, child.name) AS childId,
        child.name AS childName,
-       labels(child)[0] AS childType,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
        child.enabled AS childEnabled
 ORDER BY parentName, childName`;
   const params = hasDomain ? {domain} : {};
