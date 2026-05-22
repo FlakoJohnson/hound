@@ -2458,8 +2458,7 @@ async function showContainerTree() {
   //     inside it.
   const domainFilter = hasDomain ? 'AND parent.domain = $domain ' : '';
   const memberDomainFilter = hasDomain ? 'WHERE g.domain = $domain ' : '';
-  const cypher = `
-CALL {
+  const cypher = `CALL {
   MATCH (parent)-[:Contains]->(child)
   WHERE (parent:Domain OR parent:Container OR parent:OU)
     ${domainFilter}AND (child:Container OR child:OU OR child:User OR child:Computer OR child:Group OR child:GPO)
@@ -2657,7 +2656,9 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
   const togglePill = (type, color) => {
     const c = counts[type] || 0;
-    return `<button class="tree-toggle-btn" data-toggle-type="${escAttr(type)}" onclick="treeToggleType(${JSON.stringify(type)})" style="--toggle-color:${color}">${type.toUpperCase()} <span class="tree-toggle-count">${c}</span></button>`;
+    // Use single-quoted JS string literal inside the double-quoted onclick
+    // attribute — JSON.stringify's double quotes collide and break parsing.
+    return `<button class="tree-toggle-btn" data-toggle-type="${escAttr(type)}" onclick="treeToggleType('${type}')" style="--toggle-color:${color}">${type.toUpperCase()} <span class="tree-toggle-count">${c}</span></button>`;
   };
   // Use grey-ish color for Member pills to match the in-tree Member badge.
   const memberColor = '#94a3b8';
