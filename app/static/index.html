@@ -2895,7 +2895,14 @@ async function showObjectDetails(tableId, rowIndex) {
 
   // Set title
   const label = nodeData?.type || objectData.Type || 'Object';
-  const displayName = lookupName || lookupSid || 'Row';
+  // Prefer the row's Name column if present — tree rows always carry the
+  // friendly name, and showing it in the title beats the raw SID when both
+  // the name and the SID happen to be available (Pass 1 above picks up
+  // the SID first and never sets lookupName).
+  const rowName = (typeof objectData.Name === 'string' && objectData.Name) ||
+                  (typeof objectData.name === 'string' && objectData.name) ||
+                  '';
+  const displayName = lookupName || rowName || lookupSid || 'Row';
   title.textContent = `${label} — ${displayName.split('@')[0]}`;
 
   const resolvedObjectId = nodeData?.props?.objectid || lookupSid || '';
