@@ -755,13 +755,18 @@
     font-size: 9px; padding: 1px 5px; border-radius: 8px;
     background: color-mix(in srgb, var(--toggle-color) 18%, transparent);
   }
-  /* Type-hide classes — composed with the search filter and ancestor logic. */
-  .tree-root.tree-hide-container li[data-type="Container"],
-  .tree-root.tree-hide-ou        li[data-type="OU"],
-  .tree-root.tree-hide-group     li[data-type="Group"],
-  .tree-root.tree-hide-user      li[data-type="User"],
-  .tree-root.tree-hide-computer  li[data-type="Computer"],
-  .tree-root.tree-hide-gpo       li[data-type="GPO"] {
+  /* Type-hide classes — composed with the search filter and ancestor logic.
+     Class names are the type sanitized to [a-z0-9-]; the attribute selector
+     keeps the original case-preserving type literal (including parens). */
+  .tree-root.tree-hide-container       li[data-type="Container"],
+  .tree-root.tree-hide-ou              li[data-type="OU"],
+  .tree-root.tree-hide-group           li[data-type="Group"],
+  .tree-root.tree-hide-user            li[data-type="User"],
+  .tree-root.tree-hide-computer        li[data-type="Computer"],
+  .tree-root.tree-hide-gpo             li[data-type="GPO"],
+  .tree-root.tree-hide-member-user     li[data-type="Member(User)"],
+  .tree-root.tree-hide-member-group    li[data-type="Member(Group)"],
+  .tree-root.tree-hide-member-computer li[data-type="Member(Computer)"] {
     display: none !important;
   }
   .tree-hit > .tree-row .tree-name,
@@ -2578,7 +2583,10 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     Domain: '#a3e635',
   };
 
-  let counts = {Container: 0, OU: 0, User: 0, Computer: 0, Group: 0, GPO: 0, Domain: 0};
+  let counts = {
+    Container: 0, OU: 0, User: 0, Computer: 0, Group: 0, GPO: 0, Domain: 0,
+    'Member(User)': 0, 'Member(Group)': 0, 'Member(Computer)': 0,
+  };
   const visited = new Set();
   const MAX_DEPTH = 64; // belt-and-braces cycle guard
 
@@ -2589,12 +2597,17 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
   function renderNode(node, depth, openByDefault) {
     const search = escAttr(searchBlob(node));
+    // Effective type — when the edge to this node is MemberOf, count and tag
+    // it as a Member(<Type>) so the toggle pills can hide membership rows
+    // separately from object-tree rows of the same type.
+    const isMember = node.edgeType === 'MemberOf';
+    const effType = isMember ? `Member(${node.type||'?'})` : (node.type || '?');
     if (visited.has(node.id) || depth > MAX_DEPTH) {
       // Cycle or runaway recursion — render as a leaf reference.
-      return `<li class="tree-leaf" data-search="${search}"><span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span><span class="tree-name tree-dup">${escHtml(shortName(node.name))}</span></li>`;
+      return `<li class="tree-leaf" data-search="${search}" data-type="${escAttr(effType)}"><span class="tree-badge" style="background:${typeColor[node.type]||'var(--text2)'}">${escHtml(node.type||'?')}</span><span class="tree-name tree-dup">${escHtml(shortName(node.name))}</span></li>`;
     }
     visited.add(node.id);
-    if (counts[node.type] !== undefined) counts[node.type]++;
+    if (counts[effType] !== undefined) counts[effType]++;
 
     const idx = detailsRows.length;
     detailsRows.push(nodeRow(node));
@@ -2608,10 +2621,9 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       return (a.name || '').localeCompare(b.name || '');
     });
 
-    const isMember = node.edgeType === 'MemberOf';
-    const badgeText = isMember ? `Member(${node.type||'?'})` : (node.type || '?');
+    // isMember/effType already computed at function start.
     const badgeBg = isMember ? '#94a3b8' : (typeColor[node.type] || 'var(--text2)');
-    const badge = `<span class="tree-badge${isMember ? ' tree-badge-member' : ''}" style="background:${badgeBg}">${escHtml(badgeText)}</span>`;
+    const badge = `<span class="tree-badge${isMember ? ' tree-badge-member' : ''}" style="background:${badgeBg}">${escHtml(effType)}</span>`;
     const enabledMark = (node.enabled === false) ? '<span class="tree-disabled" title="disabled">⊘</span>' : '';
 
     if (kids.length === 0) {
@@ -2622,7 +2634,7 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       const isContainerLike = node.type === 'OU' || node.type === 'Container';
       const emptyHint = isContainerLike ? '<span class="tree-empty">(empty)</span>' : '';
       const leafRow = `<div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">·</span>${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>${emptyHint}</div>`;
-      return `<li data-search="${search}" data-type="${escAttr(node.type||'')}">${leafRow}</li>`;
+      return `<li data-search="${search}" data-type="${escAttr(effType)}">${leafRow}</li>`;
     }
     // Branch: clicking the name should toggle expand/collapse (native <summary>
     // behavior). The details modal is reachable via right-click or the ⓘ icon.
@@ -2630,15 +2642,26 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     const detailsIcon = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
     // Expand depth 0-1 by default; deeper levels collapsed.
     const openAttr = openByDefault ? ' open' : '';
-    let html = `<li data-search="${search}" data-type="${escAttr(node.type||'')}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
+    let html = `<li data-search="${search}" data-type="${escAttr(effType)}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
     for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
     html += `</ul></details></li>`;
     visited.delete(node.id);
     return html;
   }
 
-  const togglePill = (type, color) => `<button class="tree-toggle-btn" data-toggle-type="${type}" onclick="treeToggleType('${type}')" style="--toggle-color:${color}">${type.toUpperCase()} <span class="tree-toggle-count">${counts[type]||0}</span></button>`;
-  let html = `<div class="tree-root">
+  // Render the tree body first so renderNode() has populated the counts map
+  // before the toggle pills are built (otherwise every pill renders with "0").
+  let body = '<ul>';
+  for (const r of roots) body += renderNode(r, 0, true);
+  body += '</ul>';
+
+  const togglePill = (type, color) => {
+    const c = counts[type] || 0;
+    return `<button class="tree-toggle-btn" data-toggle-type="${escAttr(type)}" onclick="treeToggleType(${JSON.stringify(type)})" style="--toggle-color:${color}">${type.toUpperCase()} <span class="tree-toggle-count">${c}</span></button>`;
+  };
+  // Use grey-ish color for Member pills to match the in-tree Member badge.
+  const memberColor = '#94a3b8';
+  const html = `<div class="tree-root">
     <div class="tree-controls">
       <button class="tree-ctrl-btn" onclick="treeExpandAll(true)">▾ EXPAND ALL</button>
       <button class="tree-ctrl-btn" onclick="treeExpandAll(false)">▸ COLLAPSE ALL</button>
@@ -2649,10 +2672,13 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       ${togglePill('User', typeColor.User)}
       ${togglePill('Computer', typeColor.Computer)}
       ${togglePill('GPO', typeColor.GPO)}
+      <span class="tree-controls-sep"></span>
+      ${togglePill('Member(User)', memberColor)}
+      ${togglePill('Member(Group)', memberColor)}
+      ${togglePill('Member(Computer)', memberColor)}
     </div>
-    <ul>`;
-  for (const r of roots) html += renderNode(r, 0, true);
-  html += `</ul></div>`;
+    ${body}
+  </div>`;
 
   window._tableRows['containerTree'] = detailsRows;
 
@@ -2669,19 +2695,40 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 }
 
 function treeExpandAll(open) {
-  document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => { d.open = !!open; });
+  document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => {
+    d.open = !!open;
+    // Clear filter-driven open state so a subsequent filter doesn't re-open
+    // things the user just collapsed.
+    delete d.dataset.filterOpened;
+    delete d.dataset.filterPrev;
+  });
+  // Clear the filter input + reset hit/hidden marks so collapse-all is truly
+  // a clean slate.
+  const fb = document.getElementById('filterBox');
+  if (fb && fb.value) {
+    fb.value = '';
+    document.querySelectorAll('#resultsScroll li').forEach(li => {
+      li.style.display = '';
+      li.classList.remove('tree-hit');
+    });
+    if (window._treeCountHTML) {
+      const cEl = document.getElementById('resultCount');
+      if (cEl) cEl.innerHTML = window._treeCountHTML;
+    }
+  }
 }
 
 // Hide/show all li[data-type=TYPE] under .tree-root. Adds a CSS class to the
 // root so the styling is global to the tree and persists through re-renders
-// of the toolbar count, etc.
+// of the toolbar count, etc. Class name is the type sanitized to
+// [a-z0-9-] (parens / brackets stripped) so it's a valid CSS class.
 function treeToggleType(type) {
   const root = document.querySelector('#resultsScroll .tree-root');
   if (!root) return;
-  const cls = `tree-hide-${type.toLowerCase()}`;
+  const cls = 'tree-hide-' + type.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const isHidden = root.classList.toggle(cls);
   // Reflect state on the button itself for visual feedback.
-  const btn = document.querySelector(`#resultsScroll .tree-toggle-btn[data-toggle-type="${type}"]`);
+  const btn = root.querySelector(`.tree-toggle-btn[data-toggle-type="${CSS.escape(type)}"]`);
   if (btn) btn.classList.toggle('tree-toggle-off', isHidden);
 }
 
