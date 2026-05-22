@@ -1485,6 +1485,9 @@ function applyDomainFilter(d) {
 async function runQuery() {
   const cypher = document.getElementById('cypherInput').value.trim();
   if (!cypher) return;
+  // Clear stale filter from a previous Open-in-Visualizer or other action.
+  const _fb = document.getElementById('filterBox');
+  if (_fb) _fb.value = '';
   setRunning(true);
   const t0 = performance.now();
 
@@ -2330,6 +2333,11 @@ async function showObjectStats(objectType) {
   // Clear active states
   document.querySelectorAll('.obj-btn').forEach(btn => btn.classList.remove('active'));
   document.getElementById(`btn-${objectType.toLowerCase()}s`).classList.add('active');
+  // Clear stale filter from a previous view (Open-in-Visualizer sets the
+  // filter; without this, switching to a table view applies that filter
+  // against the new result set).
+  const _fb = document.getElementById('filterBox');
+  if (_fb) _fb.value = '';
 
   const domain = document.getElementById('domainSelect').value;
   const hasDomain = domain !== 'all';
