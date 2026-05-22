@@ -2528,12 +2528,10 @@ ORDER BY parentName, childName`;
       lastResultData = null; // tree view bypasses the cached-table redraw path
       renderContainerTree(d.data, 'resultsScroll', 'resultsToolbar', 'resultCount');
       showTab('results');
-      document.getElementById('qTitle').textContent = 'CONTAINER & OU HIERARCHY';
-      document.getElementById('qDesc').textContent = hasDomain
-        ? `AD tree for ${domain} — click a node for details`
-        : 'AD tree across all domains — click a node for details';
-      document.getElementById('cypherInput').value = cypher;
-      document.getElementById('queryPanel').style.display = '';
+      // Hide the query panel for the tree view — the tree has its own
+      // toolbar (toggles, expand/collapse, filter) and the Cypher source
+      // is just noise above the visualization.
+      document.getElementById('queryPanel').style.display = 'none';
     } else {
       showError(d.error, 'resultsScroll');
     }
