@@ -2070,6 +2070,38 @@ async function ctxOpenInVisualizer() {
     if (ident) filter = ident.val;
   }
   if (!filter) return toast('Cannot identify node', 'err');
+
+  // GPOs aren't structurally interesting in the Contains tree — they live in
+  // CN=Policies,CN=System. What the user actually wants when "opening" a GPO
+  // is the OU/Domain it's *linked* to via gPLink. Resolve that, and filter to
+  // the linked targets so the tree shows the affected scope instead.
+  const looksLikeGPO = (row.Type === 'GPO') ||
+                       (typeof oid === 'string' && /^\{[0-9A-F-]+\}$/i.test(oid)) ||
+                       (typeof oid === 'string' && /^[A-Z0-9.]+-\{[0-9A-F-]+\}$/i.test(oid));
+  if (looksLikeGPO && oid) {
+    try {
+      const r = await apiFetch('/api/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          cypher: 'MATCH (g {objectid: $oid})-[:GpLink]->(t) RETURN t.name AS name, t.distinguishedname AS dn',
+          params: {oid}
+        })
+      });
+      const d = await r.json();
+      const targets = (d.success ? d.data : []).filter(x => x.name || x.dn);
+      if (targets.length === 1) {
+        filter = targets[0].dn || targets[0].name;
+      } else if (targets.length > 1) {
+        // Multiple linked OUs — fall back to filtering by the GPO's own name
+        // so all links can be discovered, and toast the count.
+        filter = (row.GPO || row.Name || row.name || filter);
+        toast(`GPO linked to ${targets.length} targets — filter set to GPO name`, 'ok');
+      }
+      // No targets: keep the original objectid filter as a sensible default.
+    } catch(e) { /* fall through to original filter */ }
+  }
+
   await showContainerTree();
   const fb = document.getElementById('filterBox');
   if (fb) {
