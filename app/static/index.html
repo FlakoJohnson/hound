@@ -723,8 +723,16 @@
   .tree-info:hover { color: var(--cyan); background: rgba(100,255,218,.08); }
   .tree-empty { color: var(--text3); font-size: 10px; font-style: italic; margin-left: 8px; letter-spacing: 0.2px; }
   .tree-controls {
-    padding: 0 0 14px; margin-bottom: 8px; display: flex; gap: 6px;
-    border-bottom: 1px dashed var(--border);
+    /* Sticky toolbar — pinned at the top of #resultsScroll so the toggles
+       and expand/collapse buttons stay reachable while the tree scrolls
+       beneath. Negative margins pull the bar into the .tree-root padding
+       area so the solid background covers full width when sticky. */
+    position: sticky; top: 0; z-index: 5;
+    background: var(--panel, #111827);
+    padding: 10px 14px;
+    margin: -10px -14px 10px -14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   }
   .tree-ctrl-btn {
     background: transparent; border: 1px solid var(--border); color: var(--text2);
