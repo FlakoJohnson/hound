@@ -733,6 +733,37 @@
     text-transform: uppercase;
   }
   .tree-ctrl-btn:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(100,255,218,.05); }
+  .tree-controls-sep {
+    width: 1px; height: 18px; background: var(--border); margin: 0 4px 0 8px; align-self: center;
+  }
+  /* Type-toggle pills sit alongside the expand/collapse buttons. The chip is
+     colored to match the badge for that type, so the user can read it as
+     "this is the User color" at a glance. Clicking toggles the matching
+     li[data-type=...] visibility via a .tree-hide-<type> class on .tree-root. */
+  .tree-toggle-btn {
+    background: transparent; border: 1px solid var(--toggle-color, var(--border));
+    color: var(--toggle-color, var(--text2)); font-family: inherit;
+    font-size: 10px; padding: 5px 10px; cursor: pointer; letter-spacing: 0.08em;
+    border-radius: 12px; transition: background .12s, opacity .12s;
+    text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .tree-toggle-btn:hover { background: color-mix(in srgb, var(--toggle-color) 14%, transparent); }
+  .tree-toggle-btn.tree-toggle-off {
+    opacity: 0.32; text-decoration: line-through; background: transparent;
+  }
+  .tree-toggle-count {
+    font-size: 9px; padding: 1px 5px; border-radius: 8px;
+    background: color-mix(in srgb, var(--toggle-color) 18%, transparent);
+  }
+  /* Type-hide classes — composed with the search filter and ancestor logic. */
+  .tree-root.tree-hide-container li[data-type="Container"],
+  .tree-root.tree-hide-ou        li[data-type="OU"],
+  .tree-root.tree-hide-group     li[data-type="Group"],
+  .tree-root.tree-hide-user      li[data-type="User"],
+  .tree-root.tree-hide-computer  li[data-type="Computer"],
+  .tree-root.tree-hide-gpo       li[data-type="GPO"] {
+    display: none !important;
+  }
   .tree-hit > .tree-row .tree-name,
   .tree-hit > details > summary .tree-name { background: rgba(100,255,218,.12); color: var(--cyan); border-radius: 2px; padding: 0 3px; }
   .empty-icon {
@@ -2591,7 +2622,7 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       const isContainerLike = node.type === 'OU' || node.type === 'Container';
       const emptyHint = isContainerLike ? '<span class="tree-empty">(empty)</span>' : '';
       const leafRow = `<div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">·</span>${badge}${enabledMark}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${idx})" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click for details">${escHtml(shortName(node.name))}</span>${emptyHint}</div>`;
-      return `<li data-search="${search}">${leafRow}</li>`;
+      return `<li data-search="${search}" data-type="${escAttr(node.type||'')}">${leafRow}</li>`;
     }
     // Branch: clicking the name should toggle expand/collapse (native <summary>
     // behavior). The details modal is reachable via right-click or the ⓘ icon.
@@ -2599,17 +2630,25 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
     const detailsIcon = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
     // Expand depth 0-1 by default; deeper levels collapsed.
     const openAttr = openByDefault ? ' open' : '';
-    let html = `<li data-search="${search}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
+    let html = `<li data-search="${search}" data-type="${escAttr(node.type||'')}"><details class="tree-branch"${openAttr}><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${branchName}<span class="tree-count">${kids.length}</span>${detailsIcon}</div></summary><ul>`;
     for (const k of kids) html += renderNode(k, depth + 1, depth < 1);
     html += `</ul></details></li>`;
     visited.delete(node.id);
     return html;
   }
 
+  const togglePill = (type, color) => `<button class="tree-toggle-btn" data-toggle-type="${type}" onclick="treeToggleType('${type}')" style="--toggle-color:${color}">${type.toUpperCase()} <span class="tree-toggle-count">${counts[type]||0}</span></button>`;
   let html = `<div class="tree-root">
     <div class="tree-controls">
       <button class="tree-ctrl-btn" onclick="treeExpandAll(true)">▾ EXPAND ALL</button>
       <button class="tree-ctrl-btn" onclick="treeExpandAll(false)">▸ COLLAPSE ALL</button>
+      <span class="tree-controls-sep"></span>
+      ${togglePill('Container', typeColor.Container)}
+      ${togglePill('OU', typeColor.OU)}
+      ${togglePill('Group', typeColor.Group)}
+      ${togglePill('User', typeColor.User)}
+      ${togglePill('Computer', typeColor.Computer)}
+      ${togglePill('GPO', typeColor.GPO)}
     </div>
     <ul>`;
   for (const r of roots) html += renderNode(r, 0, true);
@@ -2631,6 +2670,19 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
 function treeExpandAll(open) {
   document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => { d.open = !!open; });
+}
+
+// Hide/show all li[data-type=TYPE] under .tree-root. Adds a CSS class to the
+// root so the styling is global to the tree and persists through re-renders
+// of the toolbar count, etc.
+function treeToggleType(type) {
+  const root = document.querySelector('#resultsScroll .tree-root');
+  if (!root) return;
+  const cls = `tree-hide-${type.toLowerCase()}`;
+  const isHidden = root.classList.toggle(cls);
+  // Reflect state on the button itself for visual feedback.
+  const btn = document.querySelector(`#resultsScroll .tree-toggle-btn[data-toggle-type="${type}"]`);
+  if (btn) btn.classList.toggle('tree-toggle-off', isHidden);
 }
 
 // ── Object Details Panel ───────────────────────────────────────────────────
