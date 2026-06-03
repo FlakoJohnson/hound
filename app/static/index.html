@@ -1175,6 +1175,7 @@
     <div class="stat-chip"><span>USERS</span><span class="val" id="s-User">–</span></div>
     <div class="stat-chip green"><span>COMPUTERS</span><span class="val" id="s-Computer">–</span></div>
     <div class="stat-chip yellow"><span>GROUPS</span><span class="val" id="s-Group">–</span></div>
+    <div class="stat-chip"><span>CONTAINERS</span><span class="val" id="s-Container">–</span></div>
     <div class="stat-chip"><span>DOMAINS</span><span class="val" id="s-Domain">–</span></div>
     <div class="stat-chip"><span>RELS</span><span class="val" id="s-Relationships">–</span></div>
     <div class="neo-status">
@@ -1450,7 +1451,7 @@ async function refreshStats() {
   try {
     const r = await apiFetch('/api/stats');
     const d = await r.json();
-    ['User','Computer','Group','Domain','Relationships'].forEach(k => {
+    ['User','Computer','Group','Container','Domain','Relationships'].forEach(k => {
       const el = document.getElementById('s-' + k);
       if (el) el.textContent = (d[k] || 0).toLocaleString();
     });
