@@ -37,7 +37,7 @@ services:
       - HOUND_TOKEN=${HOUND_TOKEN:-}
       - HOUND_USER=${HOUND_USER:-admin}
       - HOUND_PASS=${HOUND_PASS:-}
-      - SECRET_KEY=${SECRET_KEY:-}
+      - SECRET_KEY=${SECRET_KEY:-c91ab9a896c3022344e58bbc1671746eff0779bcd15dc1a353a846d98621ac3f}
     ports:
       - "8080:5000"
     depends_on:
