@@ -488,6 +488,7 @@ ORDER BY Type, Principal"""
             "description": "High-level object counts — understand the scope",
             "cypher": """MATCH (n)
 WHERE [lbl IN labels(n) WHERE lbl <> 'Base'][0] IS NOT NULL
+  AND n.name IS NOT NULL
 RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ObjectType, count(n) AS Count
 ORDER BY Count DESC"""
         },
