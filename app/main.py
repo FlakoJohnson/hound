@@ -37,10 +37,11 @@ app.secret_key = SECRET_KEY
 VALID_ROLES = ('user', 'operator', 'admin')
 
 # Cypher write keywords blocked for read-only 'user' role
-_WRITE_KEYWORDS = ['SET ', 'CREATE ', 'MERGE ', 'REMOVE ', 'DELETE ']
+# Normalise whitespace before checking so newline/tab variants don't bypass
+_WRITE_KEYWORDS = ['SET', 'CREATE', 'MERGE', 'REMOVE', 'DELETE']
 
 # Cypher operations that are always blocked regardless of role
-_BLOCKED_OPS = ['DETACH DELETE', 'DROP ']
+_BLOCKED_OPS = ['DETACH DELETE', 'DETACHDELETE', 'DROP', 'CALL {', 'CALL{']
 
 
 @app.after_request
@@ -387,16 +388,18 @@ def run_query():
     if not isinstance(params, dict):
         params = {}
 
-    cypher_upper = cypher.upper()
+    # Normalise whitespace so DETACH\nDELETE and SET\nx variants don't bypass checks
+    cypher_norm = ' '.join(cypher.upper().split())
 
     for op in _BLOCKED_OPS:
-        if op in cypher_upper:
+        if op in cypher_norm:
             return jsonify({'success': False, 'error': f'Operation not permitted: {op}'}), 403
 
-    # Read-only enforcement for 'user' role
+    # Read-only enforcement for 'user' role — check word boundaries via space padding
     if _current_role() == 'user':
+        padded = f' {cypher_norm} '
         for op in _WRITE_KEYWORDS:
-            if op in cypher_upper:
+            if f' {op} ' in padded or f' {op}\n' in padded:
                 return jsonify({'success': False, 'error': 'Read-only access: write operations not permitted'}), 403
 
     try:
@@ -446,6 +449,11 @@ def _run_import_job(job_id, tmp_path):
             os.unlink(tmp_path)
         except Exception:
             pass
+        # Prune jobs older than 1 hour to prevent unbounded memory growth
+        cutoff = time.time() - 3600
+        stale = [k for k, v in _jobs.items() if v.get('finished') and v['finished'] < cutoff]
+        for k in stale:
+            _jobs.pop(k, None)
 
 
 @app.route('/api/upload', methods=['POST'])

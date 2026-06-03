@@ -1,6 +1,7 @@
 import json
 import zipfile
 import logging
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,6 @@ class BloodHoundImporter:
         return None
 
     def _import_batch(self, batch, label, data_type):
-        from collections import defaultdict
         nodes_created = 0
         rels_created = 0
         errors = []
@@ -485,7 +485,7 @@ class BloodHoundImporter:
 
             if primary_rels:
                 try:
-                    session.run(f"{_SIMPLE} MERGE (a)-[:MemberOf {{isprimarygroup: true}}]->(b)", rels=primary_rels)
+                    session.run(f"{_SIMPLE} MERGE (a)-[rel:MemberOf]->(b) SET rel.isprimarygroup = true", rels=primary_rels)
                     rels_created += len(primary_rels)
                 except Exception as e:
                     errors.append(f"PrimaryGroup: {e}")
