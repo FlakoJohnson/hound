@@ -149,10 +149,12 @@ class BloodHoundImporter:
                 if r and r['backfilled']:
                     logger.info(f"Backfilled domain on {r['backfilled']} node(s) from DN")
 
-                # Match by ENDS WITH rather than splitting on ',' — splitting
-                # breaks when the CN contains an escaped comma (e.g. last-name-first
-                # conventions like CN=SMITH\, JOHN,...). Checking that the child DN
-                # ends with ',<parent DN>' is immune to escaped commas in the CN.
+                # Match direct parent by taking the longest DN that is a suffix
+                # of the child DN. Using ENDS WITH instead of splitting on ','
+                # handles escaped commas in CN values (e.g. last-name-first format
+                # CN=SMITH\, JOHN,...). Taking only collect(parent)[0] after ordering
+                # by DN length descending ensures we link only the immediate parent,
+                # not grandparent/ancestor OUs which would also match the suffix check.
                 r = session.run("""
                 MATCH (child)
                 WHERE child.distinguishedname IS NOT NULL
@@ -162,7 +164,9 @@ class BloodHoundImporter:
                   AND parent.distinguishedname <> child.distinguishedname
                   AND toUpper(child.distinguishedname)
                       ENDS WITH (',' + toUpper(parent.distinguishedname))
-                MERGE (parent)-[:Contains]->(child)
+                WITH child, parent ORDER BY size(parent.distinguishedname) DESC
+                WITH child, collect(parent)[0] AS directParent
+                MERGE (directParent)-[:Contains]->(child)
                 RETURN count(*) AS synthesized
                 """).single()
                 if r and r['synthesized']:
