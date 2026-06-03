@@ -216,7 +216,7 @@ class BloodHoundImporter:
         except Exception as e:
             logger.warning(f"DN backfill pass failed: {e}")
 
-    def import_zip(self, file_obj):
+    def import_zip(self, file_obj, progress_cb=None):
         self._ensure_schema()
         results = {'files': [], 'nodes': 0, 'relationships': 0, 'errors': []}
         # Normalise to a seekable file-like object without loading into memory.
@@ -233,8 +233,12 @@ class BloodHoundImporter:
                 json_files = [n for n in zf.namelist()
                               if n.endswith('.json') and '/' not in n.strip('/')]
                 json_files.sort(key=lambda x: self._sort_key(x))
+                files_total = len(json_files)
                 for fname in json_files:
                     try:
+                        if progress_cb:
+                            progress_cb(fname, len(results['files']), files_total,
+                                        results['nodes'], results['relationships'])
                         content = json.loads(zf.read(fname))
                         r = self._process_file(fname, content)
                         results['files'].append(fname)
@@ -242,6 +246,9 @@ class BloodHoundImporter:
                         results['relationships'] += r.get('relationships', 0)
                         if r.get('errors'):
                             results['errors'].extend(r['errors'])
+                        if progress_cb:
+                            progress_cb(fname, len(results['files']), files_total,
+                                        results['nodes'], results['relationships'])
                     except Exception as e:
                         results['errors'].append(f"{fname}: {str(e)}")
         except zipfile.BadZipFile:

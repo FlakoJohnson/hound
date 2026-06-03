@@ -3,6 +3,9 @@ import time
 import logging
 import secrets
 import sqlite3
+import threading
+import tempfile
+import uuid
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
@@ -417,6 +420,34 @@ def run_query():
         return jsonify({'success': False, 'error': str(e)}), 200
 
 
+_jobs = {}
+
+def _run_import_job(job_id, tmp_path):
+    job = _jobs[job_id]
+    job['status'] = 'running'
+    try:
+        def progress_cb(fname, done, total, nodes, rels):
+            job.update(current_file=fname, files_done=done, files_total=total,
+                       nodes=nodes, relationships=rels)
+
+        imp = BloodHoundImporter(get_driver())
+        with open(tmp_path, 'rb') as f:
+            result = imp.import_zip(f, progress_cb=progress_cb)
+        job['status'] = 'complete'
+        job['result'] = result
+        job['finished'] = time.time()
+    except Exception as e:
+        logger.exception(f"Import job {job_id} failed")
+        job['status'] = 'error'
+        job['error'] = str(e)
+        job['finished'] = time.time()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
 @app.route('/api/upload', methods=['POST'])
 @require_operator
 def upload():
@@ -424,11 +455,31 @@ def upload():
     if not f:
         return jsonify({'error': 'No file provided'}), 400
     try:
-        imp = BloodHoundImporter(get_driver())
-        result = imp.import_zip(f)
-        return jsonify(result)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.upload')
+        f.save(tmp)
+        tmp.close()
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Failed to save upload: {e}'}), 500
+
+    job_id = uuid.uuid4().hex[:12]
+    _jobs[job_id] = {
+        'status': 'pending', 'current_file': None,
+        'files_done': 0, 'files_total': 0,
+        'nodes': 0, 'relationships': 0,
+        'result': None, 'error': None,
+        'started': time.time(), 'finished': None,
+    }
+    threading.Thread(target=_run_import_job, args=(job_id, tmp.name), daemon=True).start()
+    return jsonify({'job_id': job_id})
+
+
+@app.route('/api/upload/status/<job_id>')
+@require_auth
+def upload_status(job_id):
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify(job)
 
 
 @app.route('/api/notes', methods=['POST'])

@@ -2314,27 +2314,66 @@ async function uploadFile(file) {
   const fd = new FormData();
   fd.append('file', file);
 
+  // Submit upload — returns immediately with a job_id
+  let jobId;
   try {
     const r = await apiFetch('/api/upload', { method: 'POST', body: fd });
     let d;
     try { d = await r.json(); } catch(_) { throw new Error(`Server error ${r.status}: ${r.statusText || 'unexpected response'}`); }
+    if (d.error) throw new Error(d.error);
+    jobId = d.job_id;
+  } catch(e) {
+    log.innerHTML += `<span class="log-err">✗ ${escHtml(e.message)}</span><br>`;
+    return;
+  }
 
-    if (d.error) {
+  log.innerHTML += `<span class="log-info">⬆ Received — import running in background...</span><br>`;
+  let progressEl = null;
+
+  // Poll for job status
+  while (true) {
+    await new Promise(res => setTimeout(res, 1000));
+    let d;
+    try {
+      const r = await apiFetch(`/api/upload/status/${jobId}`);
+      d = await r.json();
+    } catch(_) { continue; }
+
+    if (d.error && !d.status) {
       log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error)}</span><br>`;
-    } else {
+      break;
+    }
+
+    if (d.status === 'running' && d.current_file) {
+      const msg = `⟳ ${escHtml(d.current_file)} [${d.files_done}/${d.files_total}] — ${(d.nodes||0).toLocaleString()} nodes, ${(d.relationships||0).toLocaleString()} rels`;
+      if (!progressEl) {
+        log.innerHTML += `<span class="log-progress log-info"></span><br>`;
+        progressEl = log.querySelector('.log-progress');
+      }
+      progressEl.textContent = msg;
+    }
+
+    if (d.status === 'complete') {
+      progressEl?.parentElement?.remove();
+      const res = d.result || {};
       log.innerHTML += `<span class="log-ok">✓ Import complete</span><br>`;
-      log.innerHTML += `<span class="log-info">  Files: ${(d.files||[]).length}</span><br>`;
-      log.innerHTML += `<span class="log-info">  Nodes: ${(d.nodes||0).toLocaleString()}</span><br>`;
-      log.innerHTML += `<span class="log-info">  Relationships: ${(d.relationships||0).toLocaleString()}</span><br>`;
-      if (d.errors?.length) {
-        log.innerHTML += `<span class="log-err">  Warnings: ${d.errors.slice(0,5).map(escHtml).join('<br>  ')}</span><br>`;
+      log.innerHTML += `<span class="log-info">  Files: ${(res.files||[]).length}</span><br>`;
+      log.innerHTML += `<span class="log-info">  Nodes: ${(res.nodes||0).toLocaleString()}</span><br>`;
+      log.innerHTML += `<span class="log-info">  Relationships: ${(res.relationships||0).toLocaleString()}</span><br>`;
+      if (res.errors?.length) {
+        log.innerHTML += `<span class="log-err">  Warnings: ${res.errors.slice(0,5).map(escHtml).join('<br>  ')}</span><br>`;
       }
       toast('Import successful!', 'ok');
       await refreshStats();
       await checkHealth();
+      break;
     }
-  } catch(e) {
-    log.innerHTML += `<span class="log-err">✗ ${escHtml(e.message)}</span><br>`;
+
+    if (d.status === 'error') {
+      progressEl?.parentElement?.remove();
+      log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error || 'Import failed')}</span><br>`;
+      break;
+    }
   }
 }
 
