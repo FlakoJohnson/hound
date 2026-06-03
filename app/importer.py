@@ -293,9 +293,10 @@ class BloodHoundImporter:
         for i in range(0, len(data), BATCH):
             batch = data[i:i+BATCH]
             try:
-                n, r = self._import_batch(batch, label, data_type)
+                n, r, errs = self._import_batch(batch, label, data_type)
                 nodes_created += n
                 rels_created += r
+                errors.extend(errs)
             except Exception as e:
                 errors.append(f"Batch {i}: {str(e)}")
                 logger.exception(f"Batch error in {filename}")
@@ -310,10 +311,13 @@ class BloodHoundImporter:
         return None
 
     def _import_batch(self, batch, label, data_type):
+        from collections import defaultdict
         nodes_created = 0
         rels_created = 0
+        errors = []
 
         with self.driver.session() as session:
+            # ── Phase 1: nodes ────────────────────────────────────────────────
             node_data = []
             for obj in batch:
                 props = obj.get('Properties', {})
@@ -331,10 +335,6 @@ class BloodHoundImporter:
                     elif isinstance(v, list) and all(isinstance(i, str) for i in v):
                         clean_props[k.lower()] = v
                 clean_props['objectid'] = obj_id
-                # SharpHound zips don't emit a `domain` property on Container /
-                # OU nodes (and sometimes others); derive it from the DN so the
-                # tree visualizer's domain filter and the stats sidebar don't
-                # silently drop them.
                 if label in DN_DOMAIN_LABELS and not clean_props.get('domain'):
                     derived = _domain_from_dn(clean_props.get('distinguishedname'))
                     if derived:
@@ -342,12 +342,6 @@ class BloodHoundImporter:
                 node_data.append(clean_props)
 
             if node_data:
-                # MERGE on :Base so existing stubs (from earlier Contains/ACE refs)
-                # get the specific label added rather than a duplicate node created.
-                # REMOVE other AD-type labels first — the file we're importing is
-                # authoritative for this object's actual type (an earlier FSP
-                # Contains edge may have asserted the wrong type, e.g. User on a
-                # cross-domain Group; we shouldn't keep that leftover label).
                 query = f"""
                 UNWIND $nodes AS props
                 MERGE (n:Base {{objectid: props.objectid}})
@@ -362,256 +356,161 @@ class BloodHoundImporter:
                 except Exception as e:
                     logger.error(f"Node creation error ({label}): {e}")
 
+            # ── Phase 2: collect all relationships across the batch ────────────
+            ace_rels   = defaultdict(list)  # rel_type -> [{src, dst, inh}]
+            member_rels    = []
+            primary_rels   = []
+            session_rels   = []
+            local_rels = defaultdict(list)  # rel_type -> [{src, dst}]
+            delegate_rels  = []
+            act_rels       = []
+            trust_rels     = []
+            child_rels     = []
+            gpo_link_rels  = []
+            sid_hist_rels  = []
+            adcs_rels  = defaultdict(list)
+
             for obj in batch:
                 obj_id = obj.get('ObjectIdentifier', obj.get('Properties', {}).get('objectid', ''))
                 if not obj_id:
                     continue
+
+                for ace in obj.get('Aces', []):
+                    src_id = ace.get('PrincipalSID', '')
+                    right  = ace.get('RightName', '')
+                    if not src_id or not right or right not in ALLOWED_REL_TYPES:
+                        continue
+                    ace_rels[right].append({'src': src_id, 'dst': obj_id, 'inh': ace.get('IsInherited', False)})
+
+                for m in obj.get('Members', []):
+                    m_id = m.get('ObjectIdentifier', '')
+                    if m_id:
+                        member_rels.append({'src': m_id, 'dst': obj_id})
+
+                pg = obj.get('PrimaryGroupSid', '')
+                if pg:
+                    primary_rels.append({'src': obj_id, 'dst': pg})
+
+                sess_data = obj.get('Sessions', {})
+                sess_list = sess_data.get('Results', []) if isinstance(sess_data, dict) else (sess_data or [])
+                for s in sess_list:
+                    u_id = s.get('UserSID', '')
+                    if u_id:
+                        session_rels.append({'src': u_id, 'dst': obj_id})
+
+                for field, rel in [('LocalAdmins', 'AdminTo'), ('RemoteDesktopUsers', 'CanRDP'),
+                                    ('PSRemoteUsers', 'CanPSRemote'), ('DcomUsers', 'ExecuteDCOM')]:
+                    col = obj.get(field, {})
+                    col_list = col.get('Results', []) if isinstance(col, dict) else (col or [])
+                    for item in col_list:
+                        i_id = item.get('ObjectIdentifier', '')
+                        if i_id:
+                            local_rels[rel].append({'src': i_id, 'dst': obj_id})
+
+                for d in obj.get('AllowedToDelegate', []):
+                    d_id = d.get('ObjectIdentifier', d) if isinstance(d, dict) else d
+                    if d_id:
+                        delegate_rels.append({'src': obj_id, 'dst': d_id})
+
+                for a in obj.get('AllowedToAct', []):
+                    a_id = a.get('ObjectIdentifier', a) if isinstance(a, dict) else a
+                    if a_id:
+                        act_rels.append({'src': a_id, 'dst': obj_id})
+
+                for t in obj.get('Trusts', []):
+                    t_sid = t.get('TargetDomainSid', t.get('TargetDomainName', ''))
+                    if t_sid:
+                        trust_rels.append({'src': obj_id, 'dst': t_sid,
+                                           'tt': t.get('TrustType', ''),
+                                           'tr': t.get('IsTransitive', False),
+                                           'sf': t.get('SidFilteringEnabled', False)})
+
+                for c in obj.get('ChildObjects', []):
+                    c_id = c.get('ObjectIdentifier', '')
+                    if c_id:
+                        child_rels.append({'src': obj_id, 'dst': c_id})
+
+                for lnk in obj.get('Links', []):
+                    gpo_id = lnk.get('GUID', lnk.get('ObjectIdentifier', ''))
+                    if gpo_id:
+                        gpo_link_rels.append({'src': gpo_id, 'dst': obj_id})
+
+                for h in obj.get('HasSIDHistory', []):
+                    h_id = h.get('ObjectIdentifier', h) if isinstance(h, dict) else h
+                    if h_id:
+                        sid_hist_rels.append({'src': obj_id, 'dst': h_id})
+
+                for field, rel in [('IssuedSignedBy', 'IssuedSignedBy'), ('NTAuthStoreFor', 'NTAuthStoreFor'),
+                                    ('RootCAFor', 'RootCAFor'), ('TrustedForNTAuth', 'TrustedForNTAuth'),
+                                    ('HostsCAService', 'HostsCAService')]:
+                    for target in obj.get(field, []):
+                        t_id = target.get('ObjectIdentifier', target) if isinstance(target, dict) else target
+                        if t_id:
+                            adcs_rels[rel].append({'src': obj_id, 'dst': t_id})
+
+            # ── Phase 3: write all relationships as batched UNWINDs ───────────
+            _SIMPLE = "UNWIND $rels AS r MERGE (a:Base {objectid: r.src}) MERGE (b:Base {objectid: r.dst})"
+
+            for right, rels in ace_rels.items():
                 try:
-                    r = self._create_relationships(session, obj, obj_id, label)
-                    rels_created += r
+                    session.run(f"{_SIMPLE} MERGE (a)-[rel:{right}]->(b) SET rel.isinherited = r.inh", rels=rels)
+                    rels_created += len(rels)
                 except Exception as e:
-                    logger.debug(f"Rel error for {obj_id}: {e}")
+                    errors.append(f"ACE {right}: {e}")
 
-        return nodes_created, rels_created
+            for rels, rel_type in [
+                (member_rels,   'MemberOf'),
+                (session_rels,  'HasSession'),
+                (delegate_rels, 'AllowedToDelegate'),
+                (act_rels,      'AllowedToAct'),
+                (child_rels,    'Contains'),
+                (gpo_link_rels, 'GpLink'),
+                (sid_hist_rels, 'HasSIDHistory'),
+            ]:
+                if rels:
+                    try:
+                        session.run(f"{_SIMPLE} MERGE (a)-[:{rel_type}]->(b)", rels=rels)
+                        rels_created += len(rels)
+                    except Exception as e:
+                        errors.append(f"{rel_type}: {e}")
 
-    def _create_relationships(self, session, obj, obj_id, label):
-        count = 0
-
-        # --- ACEs ---
-        for ace in obj.get('Aces', []):
-            src_id = ace.get('PrincipalSID', '')
-            right = ace.get('RightName', '')
-            p_type = ace.get('PrincipalType', 'Base')
-            if not src_id or not right:
-                continue
-            # Validate relationship type against allowlist before interpolating into Cypher
-            if right not in ALLOWED_REL_TYPES:
-                logger.debug(f"Skipping unknown ACE RightName: {right!r}")
-                continue
-            src_label = TYPE_TO_LABEL.get(p_type.lower(), 'Base')
-            inherited = ace.get('IsInherited', False)
-            try:
-                session.run(f"""
-                    MERGE (src:Base {{objectid: $src}})
-                    ON CREATE SET src:{src_label}
-                    MERGE (dst:Base {{objectid: $dst}})
-                    ON CREATE SET dst:{label}
-                    MERGE (src)-[r:{right}]->(dst)
-                    SET r.isinherited = $inh
-                """, src=src_id, dst=obj_id, inh=inherited)
-                count += 1
-            except Exception:
-                pass
-
-        # --- Group Members ---
-        for m in obj.get('Members', []):
-            m_id = m.get('ObjectIdentifier', '')
-            m_type = m.get('ObjectType', 'Base')
-            if not m_id:
-                continue
-            m_label = TYPE_TO_LABEL.get(m_type.lower(), 'Base')
-            try:
-                session.run(f"""
-                    MERGE (src:Base {{objectid: $src}})
-                    ON CREATE SET src:{m_label}
-                    MERGE (dst:Base {{objectid: $dst}})
-                    ON CREATE SET dst:{label}
-                    MERGE (src)-[:MemberOf]->(dst)
-                """, src=m_id, dst=obj_id)
-                count += 1
-            except Exception:
-                pass
-
-        # --- Primary Group ---
-        pg = obj.get('PrimaryGroupSid', '')
-        if pg:
-            try:
-                session.run(f"""
-                    MERGE (src:Base {{objectid: $src}})
-                    ON CREATE SET src:{label}
-                    MERGE (dst:Base {{objectid: $dst}})
-                    ON CREATE SET dst:Group
-                    MERGE (src)-[:MemberOf {{isprimarygroup: true}}]->(dst)
-                """, src=obj_id, dst=pg)
-                count += 1
-            except Exception:
-                pass
-
-        # --- Sessions ---
-        sessions = obj.get('Sessions', {})
-        sess_list = sessions.get('Results', []) if isinstance(sessions, dict) else (sessions or [])
-        for s in sess_list:
-            u_id = s.get('UserSID', '')
-            if u_id:
+            if primary_rels:
                 try:
-                    session.run(f"""
-                        MERGE (u:Base {{objectid: $uid}})
-                        ON CREATE SET u:User
-                        MERGE (c:Base {{objectid: $cid}})
-                        ON CREATE SET c:{label}
-                        MERGE (u)-[:HasSession]->(c)
-                    """, uid=u_id, cid=obj_id)
-                    count += 1
-                except Exception:
-                    pass
+                    session.run(f"{_SIMPLE} MERGE (a)-[:MemberOf {{isprimarygroup: true}}]->(b)", rels=primary_rels)
+                    rels_created += len(primary_rels)
+                except Exception as e:
+                    errors.append(f"PrimaryGroup: {e}")
 
-        # --- Privilege / Local Group Collections (hardcoded rel types — not user input) ---
-        collection_map = {
-            'LocalAdmins': 'AdminTo',
-            'RemoteDesktopUsers': 'CanRDP',
-            'PSRemoteUsers': 'CanPSRemote',
-            'DcomUsers': 'ExecuteDCOM',
-        }
-        for field, rel in collection_map.items():
-            col = obj.get(field, {})
-            col_list = col.get('Results', []) if isinstance(col, dict) else (col or [])
-            for item in col_list:
-                i_id = item.get('ObjectIdentifier', '')
-                i_type = item.get('ObjectType', 'Base')
-                if not i_id:
-                    continue
-                i_label = TYPE_TO_LABEL.get(i_type.lower(), 'Base')
-                try:
-                    session.run(f"""
-                        MERGE (src:Base {{objectid: $src}})
-                        ON CREATE SET src:{i_label}
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{label}
-                        MERGE (src)-[:{rel}]->(dst)
-                    """, src=i_id, dst=obj_id)
-                    count += 1
-                except Exception:
-                    pass
+            for rel, rels in local_rels.items():
+                if rels:
+                    try:
+                        session.run(f"{_SIMPLE} MERGE (a)-[:{rel}]->(b)", rels=rels)
+                        rels_created += len(rels)
+                    except Exception as e:
+                        errors.append(f"LocalRel {rel}: {e}")
 
-        # --- AllowedToDelegate ---
-        for d in obj.get('AllowedToDelegate', []):
-            d_id = d.get('ObjectIdentifier', d) if isinstance(d, dict) else d
-            d_type = d.get('ObjectType', 'Computer') if isinstance(d, dict) else 'Computer'
-            d_label = TYPE_TO_LABEL.get(d_type.lower(), 'Computer')
-            if d_id:
-                try:
-                    session.run(f"""
-                        MERGE (src:Base {{objectid: $src}})
-                        ON CREATE SET src:{label}
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{d_label}
-                        MERGE (src)-[:AllowedToDelegate]->(dst)
-                    """, src=obj_id, dst=d_id)
-                    count += 1
-                except Exception:
-                    pass
-
-        # --- AllowedToAct (RBCD) ---
-        for a in obj.get('AllowedToAct', []):
-            a_id = a.get('ObjectIdentifier', a) if isinstance(a, dict) else a
-            a_type = a.get('ObjectType', 'Computer') if isinstance(a, dict) else 'Computer'
-            a_label = TYPE_TO_LABEL.get(a_type.lower(), 'Computer')
-            if a_id:
-                try:
-                    session.run(f"""
-                        MERGE (src:Base {{objectid: $src}})
-                        ON CREATE SET src:{a_label}
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{label}
-                        MERGE (src)-[:AllowedToAct]->(dst)
-                    """, src=a_id, dst=obj_id)
-                    count += 1
-                except Exception:
-                    pass
-
-        # --- Domain Trusts ---
-        for t in obj.get('Trusts', []):
-            t_sid = t.get('TargetDomainSid', t.get('TargetDomainName', ''))
-            if t_sid:
+            if trust_rels:
                 try:
                     session.run("""
-                        MERGE (src:Base {objectid: $src})
-                        ON CREATE SET src:Domain
-                        MERGE (dst:Base {objectid: $dst})
-                        ON CREATE SET dst:Domain
-                        MERGE (src)-[r:TrustedBy]->(dst)
-                        SET r.trusttype = $tt, r.transitive = $tr, r.sidfiltering = $sf
-                    """, src=obj_id, dst=t_sid,
-                         tt=t.get('TrustType', ''), tr=t.get('IsTransitive', False),
-                         sf=t.get('SidFilteringEnabled', False))
-                    count += 1
-                except Exception:
-                    pass
+                        UNWIND $rels AS r
+                        MERGE (a:Base {objectid: r.src}) ON CREATE SET a:Domain
+                        MERGE (b:Base {objectid: r.dst}) ON CREATE SET b:Domain
+                        MERGE (a)-[rel:TrustedBy]->(b)
+                        SET rel.trusttype = r.tt, rel.transitive = r.tr, rel.sidfiltering = r.sf
+                    """, rels=trust_rels)
+                    rels_created += len(trust_rels)
+                except Exception as e:
+                    errors.append(f"TrustedBy: {e}")
 
-        # --- ChildObjects / Contains ---
-        for c in obj.get('ChildObjects', []):
-            c_id = c.get('ObjectIdentifier', '')
-            c_type = c.get('ObjectType', 'Base')
-            c_label = TYPE_TO_LABEL.get(c_type.lower(), 'Base')
-            if c_id:
-                try:
-                    session.run(f"""
-                        MERGE (src:Base {{objectid: $src}})
-                        ON CREATE SET src:{label}
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{c_label}
-                        MERGE (src)-[:Contains]->(dst)
-                    """, src=obj_id, dst=c_id)
-                    count += 1
-                except Exception:
-                    pass
-
-        # --- GPO Links ---
-        for lnk in obj.get('Links', []):
-            gpo_id = lnk.get('GUID', lnk.get('ObjectIdentifier', ''))
-            if gpo_id:
-                try:
-                    session.run(f"""
-                        MERGE (gpo:Base {{objectid: $gpo}})
-                        ON CREATE SET gpo:GPO
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{label}
-                        MERGE (gpo)-[:GpLink]->(dst)
-                    """, gpo=gpo_id, dst=obj_id)
-                    count += 1
-                except Exception:
-                    pass
-
-        # --- HasSIDHistory ---
-        for h in obj.get('HasSIDHistory', []):
-            h_id = h.get('ObjectIdentifier', h) if isinstance(h, dict) else h
-            h_type = h.get('ObjectType', 'User') if isinstance(h, dict) else 'User'
-            h_label = TYPE_TO_LABEL.get(h_type.lower(), 'User')
-            if h_id:
-                try:
-                    session.run(f"""
-                        MERGE (src:Base {{objectid: $src}})
-                        ON CREATE SET src:{label}
-                        MERGE (dst:Base {{objectid: $dst}})
-                        ON CREATE SET dst:{h_label}
-                        MERGE (src)-[:HasSIDHistory]->(dst)
-                    """, src=obj_id, dst=h_id)
-                    count += 1
-                except Exception:
-                    pass
-
-        # --- ADCS relationships (all hardcoded rel types) ---
-        for field, rel in [('IssuedSignedBy', 'IssuedSignedBy'), ('NTAuthStoreFor', 'NTAuthStoreFor'),
-                            ('RootCAFor', 'RootCAFor'), ('TrustedForNTAuth', 'TrustedForNTAuth'),
-                            ('HostsCAService', 'HostsCAService')]:
-            for target in obj.get(field, []):
-                t_id = target.get('ObjectIdentifier', target) if isinstance(target, dict) else target
-                t_type = target.get('ObjectType', 'Base') if isinstance(target, dict) else 'Base'
-                t_label = TYPE_TO_LABEL.get(t_type.lower(), 'Base')
-                if t_id:
+            for rel, rels in adcs_rels.items():
+                if rels:
                     try:
-                        session.run(f"""
-                            MERGE (src:Base {{objectid: $src}})
-                            ON CREATE SET src:{label}
-                            MERGE (dst:Base {{objectid: $dst}})
-                            ON CREATE SET dst:{t_label}
-                            MERGE (src)-[:{rel}]->(dst)
-                        """, src=obj_id, dst=t_id)
-                        count += 1
-                    except Exception:
-                        pass
+                        session.run(f"{_SIMPLE} MERGE (a)-[:{rel}]->(b)", rels=rels)
+                        rels_created += len(rels)
+                    except Exception as e:
+                        errors.append(f"ADCS {rel}: {e}")
 
-        return count
+        return nodes_created, rels_created, errors
 
     def clear_database(self):
         with self.driver.session() as session:
