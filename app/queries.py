@@ -245,6 +245,17 @@ RETURN coalesce(n.name, n.objectid) AS Controller,
 ORDER BY AdminTargets DESC, Targets DESC"""
         },
         {
+            "id": "forcechangepassword_admins",
+            "name": "ForceChangePassword → Admin Accounts",
+            "description": "The dangerous subset: who can reset which privileged (admincount) account",
+            "cypher": """MATCH (n)-[:ForceChangePassword]->(u:User)
+WHERE u.enabled = true AND u.admincount = true
+RETURN coalesce(n.name, n.objectid) AS Controller,
+       [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+       u.name AS TargetAdmin, u.domain AS Domain
+ORDER BY TargetAdmin, Controller"""
+        },
+        {
             "id": "shadow_creds",
             "name": "Shadow Credentials Paths",
             "description": "AddKeyCredentialLink / GenericWrite on users/computers — add msDS-KeyCredentialLink",
