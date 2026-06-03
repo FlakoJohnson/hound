@@ -4,9 +4,9 @@ QUERIES = {
             "id": "da_users",
             "name": "All Domain Admins",
             "description": "All users that are members of Domain Admins (direct or nested)",
-            "cypher": """MATCH p=(u:User)-[:MemberOf*1..]->(g:Group)
+            "cypher": """MATCH (u:User)-[:MemberOf*1..]->(g:Group)
 WHERE g.name =~ '(?i)domain admins@.*'
-RETURN u.name AS User, u.domain AS Domain, u.enabled AS Enabled, u.admincount AS AdminCount
+RETURN DISTINCT u.name AS User, u.domain AS Domain, u.enabled AS Enabled, u.admincount AS AdminCount
 ORDER BY Domain, User"""
         },
         {
