@@ -258,10 +258,14 @@ class BloodHoundImporter:
                     file_obj.seek(0)
                 content = json.loads(file_obj.read())
                 fname = getattr(file_obj, 'filename', 'upload.json')
+                if progress_cb:
+                    progress_cb(fname, 0, 1, 0, 0)
                 r = self._process_file(fname, content)
                 results['files'].append(fname)
                 results['nodes'] += r.get('nodes', 0)
                 results['relationships'] += r.get('relationships', 0)
+                if progress_cb:
+                    progress_cb(fname, 1, 1, results['nodes'], results['relationships'])
             except Exception as e:
                 results['errors'].append(f"Parse error: {str(e)}")
         except Exception as e:

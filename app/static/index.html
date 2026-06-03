@@ -2344,8 +2344,10 @@ async function uploadFile(file) {
       break;
     }
 
-    if (d.status === 'running' && d.current_file) {
-      const msg = `⟳ ${escHtml(d.current_file)} [${d.files_done}/${d.files_total}] — ${(d.nodes||0).toLocaleString()} nodes, ${(d.relationships||0).toLocaleString()} rels`;
+    if (d.status === 'running') {
+      const msg = d.current_file
+        ? `⟳ ${escHtml(d.current_file)} [${d.files_done}/${d.files_total || '?'}] — ${(d.nodes||0).toLocaleString()} nodes, ${(d.relationships||0).toLocaleString()} rels`
+        : `⟳ Processing...`;
       if (!progressEl) {
         log.innerHTML += `<span class="log-progress log-info"></span><br>`;
         progressEl = log.querySelector('.log-progress');
