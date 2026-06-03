@@ -863,6 +863,15 @@
   .log-ok    { color: var(--green); }
   .log-err   { color: var(--red); }
   .log-info  { color: var(--text2); }
+  .job-table { width:100%; border-collapse:collapse; font-size:11px; }
+  .job-table th { text-align:left; color:var(--text3); font-weight:600; padding:4px 8px; border-bottom:1px solid var(--border); }
+  .job-table td { padding:4px 8px; border-bottom:1px solid var(--border); color:var(--text2); white-space:nowrap; }
+  .job-badge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:10px; font-weight:700; }
+  .job-badge.complete { background:rgba(80,250,123,.15); color:var(--green); }
+  .job-badge.running  { background:rgba(100,255,218,.15); color:var(--cyan); }
+  .job-badge.pending  { background:rgba(255,184,108,.15); color:var(--orange); }
+  .job-badge.error    { background:rgba(255,85,85,.15); color:var(--red); }
+  .job-empty { color:var(--text3); font-size:11px; font-style:italic; padding:8px; }
 
   /* ── Toast ── */
   #toast {
@@ -1313,6 +1322,14 @@
       <div class="upload-log" id="uploadLog"></div>
       <div style="display:flex; gap:12px;">
         <button class="btn btn-red" onclick="clearDB()">⚡ CLEAR DATABASE FIRST</button>
+      </div>
+
+      <div class="job-history" id="jobHistory" style="width:100%; max-width:760px; margin-top:18px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div class="query-title" style="margin:0; font-size:13px;">IMPORT HISTORY</div>
+          <button class="btn" style="padding:2px 10px; font-size:11px;" onclick="loadJobHistory()">↻ Refresh</button>
+        </div>
+        <div id="jobHistoryBody"></div>
       </div>
     </div>
 
@@ -2288,6 +2305,8 @@ function showTab(name) {
   // Show panel only on results tab
   document.getElementById('queryPanel').style.display =
     (name === 'results' && currentQuery) ? '' : 'none';
+
+  if (name === 'upload') loadJobHistory();
 }
 
 // ── Upload ─────────────────────────────────────────────────────────────────
@@ -2304,6 +2323,56 @@ function dropFile(e) {
 function handleFileInput(e) {
   const f = e.target.files[0];
   if (f) uploadFile(f);
+}
+
+function fmtTime(epoch) {
+  if (!epoch) return '—';
+  const d = new Date(epoch * 1000);
+  return d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
+function fmtDuration(start, end) {
+  if (!start || !end) return '—';
+  const s = Math.max(0, end - start);
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  return `${m}m ${Math.round(s % 60)}s`;
+}
+
+async function loadJobHistory() {
+  const body = document.getElementById('jobHistoryBody');
+  if (!body) return;
+  try {
+    const r = await apiFetch('/api/upload/jobs');
+    const d = await r.json();
+    const jobs = d.jobs || [];
+    if (!jobs.length) {
+      body.innerHTML = `<div class="job-empty">No imports yet.</div>`;
+      return;
+    }
+    let html = `<table class="job-table"><thead><tr>
+      <th>Status</th><th>Started</th><th>File</th><th>Nodes</th><th>Rels</th><th>Duration</th></tr></thead><tbody>`;
+    jobs.forEach(j => {
+      const res = j.result || {};
+      const nodes = (res.nodes ?? j.nodes ?? 0).toLocaleString();
+      const rels = (res.relationships ?? j.relationships ?? 0).toLocaleString();
+      const file = (res.files && res.files.length) ? res.files.join(', ')
+                 : (j.current_file || '—');
+      const detail = j.status === 'error' && j.error ? ` title="${escHtml(j.error)}"` : '';
+      html += `<tr${detail}>
+        <td><span class="job-badge ${escHtml(j.status)}">${escHtml((j.status||'').toUpperCase())}</span></td>
+        <td>${fmtTime(j.started)}</td>
+        <td style="max-width:220px; overflow:hidden; text-overflow:ellipsis;">${escHtml(String(file))}</td>
+        <td>${nodes}</td>
+        <td>${rels}</td>
+        <td>${fmtDuration(j.started, j.finished)}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    body.innerHTML = html;
+  } catch(e) {
+    body.innerHTML = `<div class="job-empty">Could not load history: ${escHtml(e.message)}</div>`;
+  }
 }
 
 async function uploadFile(file) {
@@ -2368,12 +2437,14 @@ async function uploadFile(file) {
       toast('Import successful!', 'ok');
       await refreshStats();
       await checkHealth();
+      loadJobHistory();
       break;
     }
 
     if (d.status === 'error') {
       progressEl?.parentElement?.remove();
       log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error || 'Import failed')}</span><br>`;
+      loadJobHistory();
       break;
     }
   }

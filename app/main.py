@@ -518,6 +518,25 @@ def upload_status(job_id):
     return jsonify(job)
 
 
+@app.route('/api/upload/jobs')
+@require_auth
+def upload_jobs():
+    """Return all known import jobs, newest first, for the history view."""
+    jobs = []
+    try:
+        for fname in os.listdir(_JOBS_DIR):
+            if not fname.endswith('.json'):
+                continue
+            job = _job_read(fname[:-5])
+            if job:
+                job['job_id'] = fname[:-5]
+                jobs.append(job)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    jobs.sort(key=lambda j: j.get('started') or 0, reverse=True)
+    return jsonify({'jobs': jobs})
+
+
 @app.route('/api/notes', methods=['POST'])
 @require_operator
 def save_note():
