@@ -461,6 +461,16 @@ def clear_db():
         return jsonify({'error': str(e)}), 500
 
 
+def startup():
+    if wait_for_neo4j():
+        try:
+            BloodHoundImporter(get_driver())
+            logger.info("Schema and indexes initialized.")
+        except Exception as e:
+            logger.warning(f"Startup schema init failed: {e}")
+
+
+startup()
+
 if __name__ == '__main__':
-    wait_for_neo4j()
     app.run(host='0.0.0.0', port=5000, debug=False)

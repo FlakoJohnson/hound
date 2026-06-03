@@ -117,6 +117,20 @@ class BloodHoundImporter:
             with self.driver.session() as session:
                 session.run("CREATE CONSTRAINT base_objectid IF NOT EXISTS "
                             "FOR (n:Base) REQUIRE n.objectid IS UNIQUE")
+                # Indexes on properties used in WHERE/ORDER BY across queries.
+                # :Base covers all subtypes since every node carries that label.
+                for idx_cypher in [
+                    "CREATE INDEX base_name      IF NOT EXISTS FOR (n:Base) ON (n.name)",
+                    "CREATE INDEX base_domain     IF NOT EXISTS FOR (n:Base) ON (n.domain)",
+                    "CREATE INDEX base_dn         IF NOT EXISTS FOR (n:Base) ON (n.distinguishedname)",
+                    "CREATE INDEX user_enabled    IF NOT EXISTS FOR (n:User) ON (n.enabled)",
+                    "CREATE INDEX user_hasspn     IF NOT EXISTS FOR (n:User) ON (n.hasspn)",
+                    "CREATE INDEX user_admincount IF NOT EXISTS FOR (n:User) ON (n.admincount)",
+                    "CREATE INDEX user_dontreqpreauth IF NOT EXISTS FOR (n:User) ON (n.dontreqpreauth)",
+                    "CREATE INDEX comp_enabled    IF NOT EXISTS FOR (n:Computer) ON (n.enabled)",
+                    "CREATE INDEX comp_uncdel     IF NOT EXISTS FOR (n:Computer) ON (n.unconstraineddelegation)",
+                ]:
+                    session.run(idx_cypher)
             BloodHoundImporter._schema_ready = True
         except Exception as e:
             logger.warning(f"Schema setup failed: {e}")
