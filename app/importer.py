@@ -212,6 +212,22 @@ class BloodHoundImporter:
                 """).single()
                 if r and r['gplinks']:
                     logger.info(f"Synthesized {r['gplinks']} GpLink edge(s) from raw gplink attribute")
+
+                # Phase 4: flag Domain Controllers. SharpHound-style data often
+                # omits the `isdc` property. A computer is a DC if it lives in the
+                # Domain Controllers OU (DN contains 'OU=DOMAIN CONTROLLERS') or
+                # advertises a Global Catalog SPN (GC/...). Set isdc=true so the
+                # DC query and visualizer don't depend on the collector emitting it.
+                r = session.run("""
+                MATCH (c:Computer)
+                WHERE (c.isdc IS NULL OR c.isdc = false)
+                  AND (toUpper(c.distinguishedname) CONTAINS 'OU=DOMAIN CONTROLLERS'
+                       OR any(s IN c.serviceprincipalnames WHERE toUpper(s) STARTS WITH 'GC/'))
+                SET c.isdc = true
+                RETURN count(c) AS flagged
+                """).single()
+                if r and r['flagged']:
+                    logger.info(f"Flagged {r['flagged']} computer(s) as Domain Controllers")
         except Exception as e:
             logger.warning(f"DN backfill pass failed: {e}")
 
