@@ -149,16 +149,19 @@ class BloodHoundImporter:
                 if r and r['backfilled']:
                     logger.info(f"Backfilled domain on {r['backfilled']} node(s) from DN")
 
+                # Match by ENDS WITH rather than splitting on ',' — splitting
+                # breaks when the CN contains an escaped comma (e.g. last-name-first
+                # conventions like CN=SMITH\, JOHN,...). Checking that the child DN
+                # ends with ',<parent DN>' is immune to escaped commas in the CN.
                 r = session.run("""
                 MATCH (child)
                 WHERE child.distinguishedname IS NOT NULL
                   AND NOT EXISTS { MATCH ()-[:Contains]->(child) }
-                  AND child.distinguishedname CONTAINS ','
-                WITH child, substring(child.distinguishedname,
-                                      size(split(child.distinguishedname, ',')[0]) + 1) AS parentDN
                 MATCH (parent)
                 WHERE parent.distinguishedname IS NOT NULL
-                  AND toUpper(parent.distinguishedname) = toUpper(parentDN)
+                  AND parent.distinguishedname <> child.distinguishedname
+                  AND toUpper(child.distinguishedname)
+                      ENDS WITH (',' + toUpper(parent.distinguishedname))
                 MERGE (parent)-[:Contains]->(child)
                 RETURN count(*) AS synthesized
                 """).single()
