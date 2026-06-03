@@ -1,6 +1,5 @@
 import json
 import zipfile
-import io
 import logging
 
 logger = logging.getLogger(__name__)
@@ -199,10 +198,11 @@ class BloodHoundImporter:
     def import_zip(self, file_obj):
         self._ensure_schema()
         results = {'files': [], 'nodes': 0, 'relationships': 0, 'errors': []}
+        # Normalise to a seekable file-like object without loading into memory.
+        if not hasattr(file_obj, 'read'):
+            file_obj = open(file_obj, 'rb')
         try:
-            data = file_obj.read() if hasattr(file_obj, 'read') else open(file_obj, 'rb').read()
-
-            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            with zipfile.ZipFile(file_obj) as zf:
                 # Zip-bomb guard: check total decompressed size before extracting
                 total_size = sum(i.file_size for i in zf.infolist())
                 if total_size > MAX_DECOMPRESSED_BYTES:
@@ -228,7 +228,7 @@ class BloodHoundImporter:
             try:
                 if hasattr(file_obj, 'seek'):
                     file_obj.seek(0)
-                content = json.loads(data)
+                content = json.loads(file_obj.read())
                 fname = getattr(file_obj, 'filename', 'upload.json')
                 r = self._process_file(fname, content)
                 results['files'].append(fname)
