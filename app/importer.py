@@ -251,10 +251,17 @@ class BloodHoundImporter:
                     return {'files': [], 'nodes': 0, 'relationships': 0,
                             'errors': [f'ZIP decompressed size ({total_size} bytes) exceeds limit']}
 
-                json_files = [n for n in zf.namelist()
-                              if n.endswith('.json') and '/' not in n.strip('/')]
+                # Accept .json at ANY depth in the zip — many collectors nest the
+                # files in a folder (e.g. 20260603_BloodHound/computers.json).
+                # Only the basename matters for type detection (_sort_key /
+                # _guess_type), so nested paths process fine. Skip directory
+                # entries (those end in '/', so .endswith('.json') excludes them).
+                json_files = [n for n in zf.namelist() if n.endswith('.json')]
                 json_files.sort(key=lambda x: self._sort_key(x))
                 files_total = len(json_files)
+                if files_total == 0:
+                    results['errors'].append(
+                        'No .json files found in the uploaded archive')
                 for fname in json_files:
                     try:
                         if progress_cb:
