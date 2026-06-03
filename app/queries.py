@@ -234,12 +234,15 @@ ORDER BY Domain, Principal"""
         {
             "id": "forcechangepassword",
             "name": "ForceChangePassword Rights",
-            "description": "Who can force password reset — no current pw needed",
-            "cypher": """MATCH p=(n)-[:ForceChangePassword]->(u:User)
+            "description": "Principals who can reset user passwords, ranked by reach (admin targets first)",
+            "cypher": """MATCH (n)-[:ForceChangePassword]->(u:User)
 WHERE u.enabled = true
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
-       u.name AS TargetUser, u.admincount AS IsAdmin
-ORDER BY u.admincount DESC, TargetUser"""
+WITH n, count(u) AS Targets,
+     sum(CASE WHEN u.admincount THEN 1 ELSE 0 END) AS AdminTargets
+RETURN coalesce(n.name, n.objectid) AS Controller,
+       [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+       Targets, AdminTargets
+ORDER BY AdminTargets DESC, Targets DESC"""
         },
         {
             "id": "shadow_creds",
