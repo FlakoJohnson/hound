@@ -485,9 +485,16 @@ def upload():
         return jsonify({'error': 'No file provided'}), 400
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.upload')
-        f.save(tmp)
-        tmp.close()
+        try:
+            f.save(tmp)
+        finally:
+            tmp.close()
     except Exception as e:
+        # Don't leak the partial temp file if saving failed
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
         return jsonify({'error': f'Failed to save upload: {e}'}), 500
 
     job_id = uuid.uuid4().hex[:12]
@@ -559,6 +566,17 @@ def _recover_stale_jobs():
                 _job_write(job_id, job)
     except Exception as e:
         logger.warning(f"Stale job recovery failed: {e}")
+    # Sweep temp upload files orphaned by a crash (no import runs at boot)
+    try:
+        tmpdir = tempfile.gettempdir()
+        for fn in os.listdir(tmpdir):
+            if fn.endswith('.upload'):
+                try:
+                    os.unlink(os.path.join(tmpdir, fn))
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Temp file sweep failed: {e}")
 
 
 def startup():
