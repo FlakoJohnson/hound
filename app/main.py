@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import logging
 import secrets
@@ -423,37 +424,57 @@ def run_query():
         return jsonify({'success': False, 'error': str(e)}), 200
 
 
-_jobs = {}
+_JOBS_DIR = '/data/jobs'
+os.makedirs(_JOBS_DIR, exist_ok=True)
+
+def _job_path(job_id):
+    return os.path.join(_JOBS_DIR, f'{job_id}.json')
+
+def _job_read(job_id):
+    try:
+        with open(_job_path(job_id)) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+def _job_write(job_id, state):
+    with open(_job_path(job_id), 'w') as f:
+        json.dump(state, f)
+
+def _job_update(job_id, **kwargs):
+    state = _job_read(job_id) or {}
+    state.update(kwargs)
+    _job_write(job_id, state)
+
 
 def _run_import_job(job_id, tmp_path):
-    job = _jobs[job_id]
-    job['status'] = 'running'
+    _job_update(job_id, status='running')
     try:
         def progress_cb(fname, done, total, nodes, rels):
-            job.update(current_file=fname, files_done=done, files_total=total,
-                       nodes=nodes, relationships=rels)
+            _job_update(job_id, current_file=fname, files_done=done,
+                        files_total=total, nodes=nodes, relationships=rels)
 
         imp = BloodHoundImporter(get_driver())
         with open(tmp_path, 'rb') as f:
             result = imp.import_zip(f, progress_cb=progress_cb)
-        job['status'] = 'complete'
-        job['result'] = result
-        job['finished'] = time.time()
+        _job_update(job_id, status='complete', result=result, finished=time.time())
     except Exception as e:
         logger.exception(f"Import job {job_id} failed")
-        job['status'] = 'error'
-        job['error'] = str(e)
-        job['finished'] = time.time()
+        _job_update(job_id, status='error', error=str(e), finished=time.time())
     finally:
         try:
             os.unlink(tmp_path)
         except Exception:
             pass
-        # Prune jobs older than 1 hour to prevent unbounded memory growth
+        # Prune job files older than 1 hour
         cutoff = time.time() - 3600
-        stale = [k for k, v in _jobs.items() if v.get('finished') and v['finished'] < cutoff]
-        for k in stale:
-            _jobs.pop(k, None)
+        for f in os.listdir(_JOBS_DIR):
+            p = os.path.join(_JOBS_DIR, f)
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    os.unlink(p)
+            except Exception:
+                pass
 
 
 @app.route('/api/upload', methods=['POST'])
@@ -470,13 +491,13 @@ def upload():
         return jsonify({'error': f'Failed to save upload: {e}'}), 500
 
     job_id = uuid.uuid4().hex[:12]
-    _jobs[job_id] = {
+    _job_write(job_id, {
         'status': 'pending', 'current_file': None,
         'files_done': 0, 'files_total': 0,
         'nodes': 0, 'relationships': 0,
         'result': None, 'error': None,
         'started': time.time(), 'finished': None,
-    }
+    })
     threading.Thread(target=_run_import_job, args=(job_id, tmp.name), daemon=True).start()
     return jsonify({'job_id': job_id})
 
@@ -484,7 +505,7 @@ def upload():
 @app.route('/api/upload/status/<job_id>')
 @require_auth
 def upload_status(job_id):
-    job = _jobs.get(job_id)
+    job = _job_read(job_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify(job)
