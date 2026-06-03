@@ -125,12 +125,16 @@ class BloodHoundImporter:
         self._backfill_from_dn()
 
     def _backfill_from_dn(self):
-        """Two idempotent migrations that fix gaps in SharpHound-style data:
+        """Three idempotent migrations that fix gaps in source data that
+        carries raw LDAP attributes but not the BloodHound-canonical
+        pre-processed Links / ChildObjects arrays:
           1. Set `domain` on any node that has a DN but no domain.
-          2. Synthesize `Contains` edges from DN parentage when the source
-             zip didn't emit ChildObjects (e.g. SharpHound only emits them
-             for OUs, leaving Containers orphaned in the tree).
-        Both guards (IS NULL / NOT EXISTS) make repeated runs no-ops."""
+          2. Synthesize `Contains` edges from DN parentage (orphan tree fix).
+          3. Synthesize `GpLink` edges from the raw `gplink` LDAP attribute
+             on Domain / OU nodes — parses the
+             [LDAP://cn={GUID},cn=policies,…;flag] segments and matches the
+             GUID against each GPO's distinguishedname.
+        All guards (IS NULL / NOT EXISTS / MERGE) make repeated runs no-ops."""
         try:
             with self.driver.session() as session:
                 r = session.run("""
@@ -161,6 +165,34 @@ class BloodHoundImporter:
                 """).single()
                 if r and r['synthesized']:
                     logger.info(f"Synthesized {r['synthesized']} Contains edge(s) from DN parentage")
+
+                # Phase 3: parse raw gplink attribute → GpLink edges.
+                # Source format: "[LDAP://cn={GUID},cn=policies,…;FLAG][LDAP://…]"
+                # We split on '[', strip the trailing ']', take everything
+                # before ';' as the LDAP path and the rest as the flag (2=enforced).
+                # The CN GUID is extracted and resolved against GPO DNs.
+                r = session.run("""
+                MATCH (anchor)
+                WHERE anchor.gplink IS NOT NULL AND toLower(anchor.gplink) CONTAINS 'cn={'
+                WITH anchor, anchor.gplink AS raw
+                UNWIND [s IN split(raw, '[') WHERE size(s) > 0] AS seg
+                WITH anchor, replace(seg, ']', '') AS clean
+                WITH anchor,
+                     split(clean, ';')[0] AS ldap_part,
+                     coalesce(split(clean, ';')[1], '0') AS flag
+                WITH anchor, flag, toUpper(ldap_part) AS up
+                WHERE up CONTAINS 'CN={'
+                WITH anchor, flag,
+                     split(split(up, 'CN={')[1], '}')[0] AS guid
+                WHERE guid <> ''
+                MATCH (gpo:GPO)
+                WHERE toUpper(gpo.distinguishedname) CONTAINS ('CN={' + guid + '}')
+                MERGE (gpo)-[r:GpLink]->(anchor)
+                SET r.enforced = (flag = '2')
+                RETURN count(r) AS gplinks
+                """).single()
+                if r and r['gplinks']:
+                    logger.info(f"Synthesized {r['gplinks']} GpLink edge(s) from raw gplink attribute")
         except Exception as e:
             logger.warning(f"DN backfill pass failed: {e}")
 
@@ -566,11 +598,24 @@ class BloodHoundImporter:
 
     def get_stats(self):
         stats = {}
-        labels = ['User', 'Computer', 'Group', 'Domain', 'GPO', 'OU',
-                  'Container', 'CertTemplate', 'EnterpriseCA', 'RootCA',
-                  'AIACA', 'NTAuthStore', 'IssuancePolicy']
+        # AD object labels — filter `name IS NOT NULL` so the chip count
+        # matches what shows up in the list views (which already filter
+        # out namespaced BUILTIN-group stubs and other name-less ACE
+        # reference targets).
+        ad_object_labels = ['User', 'Computer', 'Group', 'Domain', 'GPO',
+                            'OU', 'Container']
+        # ADCS labels — these are only imported from their own JSON files,
+        # never stub-created via ACE references, so no filter needed.
+        adcs_labels = ['CertTemplate', 'EnterpriseCA', 'RootCA',
+                       'AIACA', 'NTAuthStore', 'IssuancePolicy']
         with self.driver.session() as session:
-            for lbl in labels:
+            for lbl in ad_object_labels:
+                try:
+                    r = session.run(f"MATCH (n:{lbl}) WHERE n.name IS NOT NULL RETURN count(n) AS c").single()
+                    stats[lbl] = r['c'] if r else 0
+                except Exception:
+                    stats[lbl] = 0
+            for lbl in adcs_labels:
                 try:
                     r = session.run(f"MATCH (n:{lbl}) RETURN count(n) AS c").single()
                     stats[lbl] = r['c'] if r else 0
