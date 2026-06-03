@@ -80,12 +80,31 @@ FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'containe
                    'certtemplate', 'enterpriseca', 'rootca', 'aiaca', 'ntauthstore',
                    'issuancepolicy']
 
+# AD object labels — these have a distinguishedname that encodes the domain.
+# Certificate / authority labels (CertTemplate, EnterpriseCA, RootCA, AIACA,
+# NTAuthStore, IssuancePolicy) have DNs rooted in the Configuration partition,
+# not the domain partition, so DN-based domain inference doesn't apply.
+DN_DOMAIN_LABELS = {'User', 'Computer', 'Group', 'Domain', 'GPO', 'OU', 'Container'}
+
+
+def _domain_from_dn(dn):
+    """Derive a domain FQDN from a distinguished name.
+    'CN=Users,DC=FTBCO,DC=FTN,DC=COM' → 'FTBCO.FTN.COM'
+    Returns None if the DN has no DC= components."""
+    if not dn or not isinstance(dn, str):
+        return None
+    parts = [p.strip()[3:] for p in dn.split(',') if p.strip().upper().startswith('DC=')]
+    return '.'.join(parts).upper() if parts else None
+
 
 class BloodHoundImporter:
     _schema_ready = False
 
     def __init__(self, driver):
         self.driver = driver
+        # Idempotent — actual work only runs on the first importer instance
+        # per process (gated by the class-level _schema_ready flag).
+        self._ensure_schema()
 
     def _ensure_schema(self):
         # Every node gets a :Base label so MERGE/MATCH-by-objectid resolves
@@ -101,7 +120,49 @@ class BloodHoundImporter:
                             "FOR (n:Base) REQUIRE n.objectid IS UNIQUE")
             BloodHoundImporter._schema_ready = True
         except Exception as e:
-            logger.warning(f"Could not create :Base(objectid) constraint: {e}")
+            logger.warning(f"Schema setup failed: {e}")
+        # Run the backfills once (idempotent on subsequent calls).
+        self._backfill_from_dn()
+
+    def _backfill_from_dn(self):
+        """Two idempotent migrations that fix gaps in SharpHound-style data:
+          1. Set `domain` on any node that has a DN but no domain.
+          2. Synthesize `Contains` edges from DN parentage when the source
+             zip didn't emit ChildObjects (e.g. SharpHound only emits them
+             for OUs, leaving Containers orphaned in the tree).
+        Both guards (IS NULL / NOT EXISTS) make repeated runs no-ops."""
+        try:
+            with self.driver.session() as session:
+                r = session.run("""
+                MATCH (n)
+                WHERE n.distinguishedname IS NOT NULL AND n.domain IS NULL
+                WITH n, [p IN split(n.distinguishedname, ',')
+                         WHERE toUpper(trim(p)) STARTS WITH 'DC='
+                         | substring(trim(p), 3)] AS parts
+                WHERE size(parts) > 0
+                SET n.domain = toUpper(reduce(s = head(parts), p IN tail(parts) | s + '.' + p))
+                RETURN count(n) AS backfilled
+                """).single()
+                if r and r['backfilled']:
+                    logger.info(f"Backfilled domain on {r['backfilled']} node(s) from DN")
+
+                r = session.run("""
+                MATCH (child)
+                WHERE child.distinguishedname IS NOT NULL
+                  AND NOT EXISTS { MATCH ()-[:Contains]->(child) }
+                  AND child.distinguishedname CONTAINS ','
+                WITH child, substring(child.distinguishedname,
+                                      size(split(child.distinguishedname, ',')[0]) + 1) AS parentDN
+                MATCH (parent)
+                WHERE parent.distinguishedname IS NOT NULL
+                  AND toUpper(parent.distinguishedname) = toUpper(parentDN)
+                MERGE (parent)-[:Contains]->(child)
+                RETURN count(*) AS synthesized
+                """).single()
+                if r and r['synthesized']:
+                    logger.info(f"Synthesized {r['synthesized']} Contains edge(s) from DN parentage")
+        except Exception as e:
+            logger.warning(f"DN backfill pass failed: {e}")
 
     def import_zip(self, file_obj):
         self._ensure_schema()
@@ -145,6 +206,10 @@ class BloodHoundImporter:
                 results['errors'].append(f"Parse error: {str(e)}")
         except Exception as e:
             results['errors'].append(f"ZIP error: {str(e)}")
+        # Post-import: backfill domain + synthesize Contains edges from DN parentage.
+        # Catches SharpHound-style data where node properties / ChildObjects are sparse.
+        # Both passes are idempotent, so re-uploads don't grow the graph.
+        self._backfill_from_dn()
         return results
 
     def _sort_key(self, fname):
@@ -213,6 +278,14 @@ class BloodHoundImporter:
                     elif isinstance(v, list) and all(isinstance(i, str) for i in v):
                         clean_props[k.lower()] = v
                 clean_props['objectid'] = obj_id
+                # SharpHound zips don't emit a `domain` property on Container /
+                # OU nodes (and sometimes others); derive it from the DN so the
+                # tree visualizer's domain filter and the stats sidebar don't
+                # silently drop them.
+                if label in DN_DOMAIN_LABELS and not clean_props.get('domain'):
+                    derived = _domain_from_dn(clean_props.get('distinguishedname'))
+                    if derived:
+                        clean_props['domain'] = derived
                 node_data.append(clean_props)
 
             if node_data:
@@ -494,7 +567,8 @@ class BloodHoundImporter:
     def get_stats(self):
         stats = {}
         labels = ['User', 'Computer', 'Group', 'Domain', 'GPO', 'OU',
-                  'CertTemplate', 'EnterpriseCA', 'RootCA']
+                  'Container', 'CertTemplate', 'EnterpriseCA', 'RootCA',
+                  'AIACA', 'NTAuthStore', 'IssuancePolicy']
         with self.driver.session() as session:
             for lbl in labels:
                 try:
