@@ -541,6 +541,26 @@ def clear_db():
         return jsonify({'error': str(e)}), 500
 
 
+def _recover_stale_jobs():
+    """Mark any non-terminal job as failed on startup. An import runs in a
+    daemon thread; a container restart kills it mid-run, leaving the job file
+    stuck at 'running'/'pending' forever so the UI polls it indefinitely.
+    At boot no import can be in flight yet, so this is safe."""
+    try:
+        for fname in os.listdir(_JOBS_DIR):
+            if not fname.endswith('.json'):
+                continue
+            job_id = fname[:-5]
+            job = _job_read(job_id)
+            if job and job.get('status') in ('pending', 'running'):
+                job['status'] = 'error'
+                job['error'] = 'Import interrupted by server restart'
+                job['finished'] = time.time()
+                _job_write(job_id, job)
+    except Exception as e:
+        logger.warning(f"Stale job recovery failed: {e}")
+
+
 def startup():
     if wait_for_neo4j():
         try:
@@ -548,6 +568,7 @@ def startup():
             logger.info("Schema and indexes initialized.")
         except Exception as e:
             logger.warning(f"Startup schema init failed: {e}")
+    _recover_stale_jobs()
 
 
 startup()

@@ -162,24 +162,30 @@ class BloodHoundImporter:
                 if r and r['backfilled']:
                     logger.info(f"Backfilled domain on {r['backfilled']} node(s) from DN")
 
-                # Match direct parent by taking the longest DN that is a suffix
-                # of the child DN. Using ENDS WITH instead of splitting on ','
-                # handles escaped commas in CN values (e.g. last-name-first format
-                # CN=SMITH\, JOHN,...). Taking only collect(parent)[0] after ordering
-                # by DN length descending ensures we link only the immediate parent,
-                # not grandparent/ancestor OUs which would also match the suffix check.
+                # Link each parentless child to its DIRECT parent by computing the
+                # parent DN (the child DN minus its first RDN) and matching the
+                # parent by equality on distinguishedname — which hits the base_dn
+                # index for an O(1) lookup per child (O(n) overall). The previous
+                # ENDS WITH approach was an O(n²) cross-product that ground the DB
+                # to a halt for minutes on large datasets.
+                #
+                # The first RDN must be split on the first UNESCAPED comma, since
+                # CNs can contain escaped commas (last-name-first: CN=SMITH\, JOHN).
+                # We protect '\,' with a sentinel char before splitting, then strip
+                # everything up to and including the first real comma.
                 r = session.run("""
                 MATCH (child)
                 WHERE child.distinguishedname IS NOT NULL
+                  AND child.distinguishedname CONTAINS ','
                   AND NOT EXISTS { MATCH ()-[:Contains]->(child) }
-                MATCH (parent)
-                WHERE parent.distinguishedname IS NOT NULL
-                  AND parent.distinguishedname <> child.distinguishedname
-                  AND toUpper(child.distinguishedname)
-                      ENDS WITH (',' + toUpper(parent.distinguishedname))
-                WITH child, parent ORDER BY size(parent.distinguishedname) DESC
-                WITH child, collect(parent)[0] AS directParent
-                MERGE (directParent)-[:Contains]->(child)
+                WITH child,
+                     replace(child.distinguishedname, '\\\\,', '\\u0001') AS safe
+                WITH child, safe,
+                     substring(safe, size(split(safe, ',')[0]) + 1) AS parentSafe
+                WITH child, replace(parentSafe, '\\u0001', '\\\\,') AS parentDN
+                WHERE parentDN <> ''
+                MATCH (parent:Base {distinguishedname: parentDN})
+                MERGE (parent)-[:Contains]->(child)
                 RETURN count(*) AS synthesized
                 """).single()
                 if r and r['synthesized']:
