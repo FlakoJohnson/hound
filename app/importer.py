@@ -134,8 +134,6 @@ class BloodHoundImporter:
             BloodHoundImporter._schema_ready = True
         except Exception as e:
             logger.warning(f"Schema setup failed: {e}")
-        # Run the backfills once (idempotent on subsequent calls).
-        self._backfill_from_dn()
 
     def _backfill_from_dn(self):
         """Three idempotent migrations that fix gaps in source data that

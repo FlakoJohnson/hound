@@ -401,7 +401,7 @@ def run_query():
 
     try:
         with get_driver().session() as neo4j_session:
-            result = neo4j_session.run(cypher, parameters=params)
+            result = neo4j_session.run(cypher, parameters=params, timeout=60)
             keys = list(result.keys())
             records = []
             for record in result:
