@@ -4,7 +4,7 @@ QUERIES = {
             "id": "da_users",
             "name": "All Domain Admins",
             "description": "All users that are members of Domain Admins (direct or nested)",
-            "cypher": """MATCH (u:User)-[:MemberOf*1..]->(g:Group)
+            "cypher": """MATCH (u:User)-[:MemberOf*1..5]->(g:Group)
 WHERE g.name =~ '(?i)domain admins@.*'
 RETURN DISTINCT u.name AS User, u.domain AS Domain, u.enabled AS Enabled, u.admincount AS AdminCount
 ORDER BY Domain, User"""
@@ -40,7 +40,7 @@ ORDER BY Domain"""
             "id": "enterprise_admins",
             "name": "Enterprise Admins",
             "description": "All members of Enterprise Admins (forest-wide DA equivalent)",
-            "cypher": """MATCH p=(u:User)-[:MemberOf*1..]->(g:Group)
+            "cypher": """MATCH p=(u:User)-[:MemberOf*1..5]->(g:Group)
 WHERE g.name =~ '(?i)enterprise admins@.*'
 RETURN u.name AS User, u.domain AS Domain, u.enabled AS Enabled
 ORDER BY Domain, User"""
@@ -51,7 +51,7 @@ ORDER BY Domain, User"""
             "description": "Member count in all high-privilege built-in groups",
             "cypher": """MATCH (g:Group)
 WHERE g.name =~ '(?i)(domain admins|enterprise admins|schema admins|administrators|backup operators|account operators|print operators|server operators|group policy creator owners|dnsadmins)@.*'
-OPTIONAL MATCH (u)-[:MemberOf*1..]->(g)
+OPTIONAL MATCH (u)-[:MemberOf*1..5]->(g)
 RETURN g.name AS Group, count(DISTINCT u) AS MemberCount
 ORDER BY MemberCount DESC"""
         },
@@ -99,7 +99,7 @@ ORDER BY u.admincount DESC, User"""
             "id": "kerberoastable_path_da",
             "name": "Kerberoastable → DA (Shortest Path)",
             "description": "Kerberoastable users with a path to Domain Admins — high-priority targets",
-            "cypher": """MATCH p=shortestPath((u:User)-[*1..]->(g:Group))
+            "cypher": """MATCH p=shortestPath((u:User)-[*1..10]->(g:Group))
 WHERE u.hasspn = true AND u.enabled = true
   AND g.name =~ '(?i)domain admins@.*'
 RETURN u.name AS User, u.domain AS Domain,
@@ -124,7 +124,7 @@ ORDER BY u.admincount DESC, User"""
             "cypher": """MATCH (c:Computer)
 WHERE c.unconstraineddelegation = true AND c.enabled = true
 AND NOT EXISTS {
-  MATCH (c)-[:MemberOf*1..]->(:Group)
+  MATCH (c)-[:MemberOf*1..5]->(:Group)
   WHERE toLower(toString(c.name)) CONTAINS 'dc'
 }
 RETURN c.name AS Computer, c.domain AS Domain,
@@ -346,7 +346,7 @@ ORDER BY Domain, Computer, Principal"""
             "id": "most_admin_rights",
             "name": "Top Local Admins (by count)",
             "description": "Users/groups with the most local admin rights across the environment",
-            "cypher": """MATCH (u)-[:AdminTo|MemberOf*1..]->(c:Computer)
+            "cypher": """MATCH (u)-[:AdminTo|MemberOf*1..5]->(c:Computer)
 WHERE (u:User OR u:Group) AND c.enabled = true
 RETURN u.name AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
        count(DISTINCT c) AS AdminCount
@@ -357,7 +357,7 @@ LIMIT 30"""
             "id": "da_sessions",
             "name": "Active DA Sessions",
             "description": "Computers where Domain Admins have active sessions — harvest their token",
-            "cypher": """MATCH (u:User)-[:MemberOf*1..]->(g:Group)
+            "cypher": """MATCH (u:User)-[:MemberOf*1..5]->(g:Group)
 WHERE g.name =~ '(?i)domain admins@.*'
 MATCH (u)-[:HasSession]->(c:Computer)
 RETURN u.name AS DomainAdmin, c.name AS Computer,
