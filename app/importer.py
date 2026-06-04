@@ -616,8 +616,23 @@ class BloodHoundImporter:
         return nodes_created, rels_created, errors
 
     def clear_database(self):
+        # Delete in batches via CALL {} IN TRANSACTIONS so large graphs don't
+        # blow Neo4j's per-transaction memory limit (a single MATCH (n) DETACH
+        # DELETE n holds the whole graph in one tx and OOMs).
+        # CALL {} IN TRANSACTIONS must run as an auto-commit (implicit) query —
+        # NOT inside execute_write — and .consume() is required to actually
+        # drive it to completion (session.run is lazy; an unconsumed result is
+        # discarded on session close, silently deleting nothing).
         with self.driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
+            # Phase 1: drop all relationships in batches (cheap per row, and
+            # avoids the DETACH DELETE memory spike on high-degree nodes).
+            session.run(
+                "MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS"
+            ).consume()
+            # Phase 2: drop the now-disconnected nodes in batches.
+            session.run(
+                "MATCH (n) CALL { WITH n DELETE n } IN TRANSACTIONS OF 10000 ROWS"
+            ).consume()
 
     def get_stats(self):
         stats = {}
