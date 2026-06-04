@@ -2632,17 +2632,14 @@ async function showContainerTree() {
   //   • MemberOf (reversed) — group memberships (Group → its User/Group/Computer
   //     members). This lets you expand a Group node in the tree and see what's
   //     inside it.
+  // Object-tree only (Contains hierarchy: Domain → OU/Container → leaf).
+  // Group MEMBERSHIPS are NOT bulk-loaded here — they're fetched lazily when a
+  // Group node is expanded (see lazyLoadGroupMembers). Eagerly unioning every
+  // MemberOf edge was the main cause of slow/huge container-tree loads.
   const domainFilter = hasDomain ? 'AND parent.domain = $domain ' : '';
-  const memberDomainFilter = hasDomain ? 'WHERE g.domain = $domain ' : '';
-  const cypher = `CALL {
-  MATCH (parent)-[:Contains]->(child)
+  const cypher = `MATCH (parent)-[:Contains]->(child)
   WHERE (parent:Domain OR parent:Container OR parent:OU)
     ${domainFilter}AND (child:Container OR child:OU OR child:User OR child:Computer OR child:Group OR child:GPO)
-  RETURN parent, child, 'Contains' AS edgeType
-  UNION
-  MATCH (member)-[:MemberOf]->(g:Group)
-  ${memberDomainFilter}RETURN g AS parent, member AS child, 'MemberOf' AS edgeType
-}
 RETURN coalesce(parent.objectid, parent.name) AS parentId,
        parent.name AS parentName,
        [lbl IN labels(parent) WHERE lbl <> 'Base'][0] AS parentType,
@@ -2651,8 +2648,7 @@ RETURN coalesce(parent.objectid, parent.name) AS parentId,
        child.name AS childName,
        [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS childType,
        child.distinguishedname AS childDN,
-       child.enabled AS childEnabled,
-       edgeType
+       child.enabled AS childEnabled
 ORDER BY parentName, childName`;
   const params = hasDomain ? {domain} : {};
 
@@ -2801,6 +2797,13 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
 
     if (kids.length === 0) {
       visited.delete(node.id); // allow same SID under another parent (cross-domain FSP merge)
+      // Groups have no Contains children, but their MEMBERS can be loaded on
+      // demand — render as a collapsed, lazily-expandable branch. The members
+      // are fetched the first time it's opened (ontoggle → lazyLoadGroupMembers).
+      if (node.type === 'Group') {
+        const lazyInfo = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
+        return `<li data-search="${search}" data-type="Group"><details class="tree-branch tree-lazy-group" data-gid="${escAttr(node.id)}" ontoggle="lazyLoadGroupMembers(this)"><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${badge}${enabledMark}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click to load members / Right-click for details">${escHtml(shortName(node.name))}</span><span class="tree-count">⋯</span>${lazyInfo}</div></summary><ul class="tree-lazy-body"><li><span class="tree-empty">click to load members…</span></li></ul></details></li>`;
+      }
       // Container-type leaves (OU/Container with no children) get an "(empty)"
       // marker so the tree doesn't mislead the eye into thinking they're nested
       // under the row above.
@@ -2847,10 +2850,6 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       ${togglePill('User', typeColor.User)}
       ${togglePill('Computer', typeColor.Computer)}
       ${togglePill('GPO', typeColor.GPO)}
-      <span class="tree-controls-sep"></span>
-      ${togglePill('Member(User)', memberColor)}
-      ${togglePill('Member(Group)', memberColor)}
-      ${togglePill('Member(Computer)', memberColor)}
     </div>
     ${body}
   </div>`;
@@ -2869,8 +2868,61 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
   if (fb) fb.value = '';
 }
 
+// Lazily fetch a group's members the first time its node is expanded.
+// Fires from <details ontoggle>; only acts on open + not-yet-loaded.
+async function lazyLoadGroupMembers(el) {
+  if (!el.open || el.dataset.loaded) return;
+  el.dataset.loaded = '1';
+  const gid = el.dataset.gid;
+  const ul = el.querySelector(':scope > .tree-lazy-body');
+  if (!ul) return;
+  ul.innerHTML = '<li><span class="tree-empty">loading members…</span></li>';
+  const memberColor = '#94a3b8';
+  const shortName = (n) => !n ? '(unnamed)' : (n.includes('@') ? n.split('@')[0] : n);
+  try {
+    const r = await apiFetch('/api/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        cypher: "MATCH (m)-[:MemberOf]->(g:Base {objectid:$gid}) RETURN coalesce(m.objectid,m.name) AS id, m.name AS name, [lbl IN labels(m) WHERE lbl<>'Base'][0] AS type, m.enabled AS enabled ORDER BY type, name",
+        params: {gid}
+      })
+    });
+    const d = await r.json();
+    if (!d.success) { ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(d.error||'load failed')}</span></li>`; el.dataset.loaded=''; return; }
+    const members = d.data || [];
+    const cntEl = el.querySelector(':scope > summary .tree-count');
+    if (cntEl) cntEl.textContent = members.length;
+    if (!members.length) { ul.innerHTML = '<li><span class="tree-empty">(no members)</span></li>'; return; }
+    const reg = window._tableRows['containerTree'] || (window._tableRows['containerTree'] = []);
+    let h = '';
+    for (const m of members) {
+      const mi = reg.length;
+      reg.push({Name: m.name, Type: m.type, objectid: m.id});
+      const dis = (m.enabled === false) ? '<span class="tree-disabled" title="disabled">⊘</span>' : '';
+      const sn = escHtml(shortName(m.name));
+      const badge = `<span class="tree-badge tree-badge-member" style="background:${memberColor}">Member(${escHtml(m.type||'?')})</span>`;
+      const search = escAttr([m.name, m.id].filter(Boolean).join(' ').toLowerCase());
+      if (m.type === 'Group') {
+        // Nested group → lazily expandable too (recursive on demand).
+        const info = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${mi})" title="Details">ⓘ</span>`;
+        h += `<li data-search="${search}" data-type="Member(Group)"><details class="tree-branch tree-lazy-group" data-gid="${escAttr(m.id)}" ontoggle="lazyLoadGroupMembers(this)"><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${badge}${dis}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${mi})" title="Click to load members">${sn}</span><span class="tree-count">⋯</span>${info}</div></summary><ul class="tree-lazy-body"><li><span class="tree-empty">click to load members…</span></li></ul></details></li>`;
+      } else {
+        h += `<li data-search="${search}" data-type="Member(${escAttr(m.type||'?')})"><div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">·</span>${badge}${dis}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${mi})" oncontextmenu="showCtxMenu(event,'containerTree',${mi})" title="Click for details">${sn}</span></div></li>`;
+      }
+    }
+    ul.innerHTML = h;
+  } catch(e) {
+    ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(e.message)}</span></li>`;
+    el.dataset.loaded = '';
+  }
+}
+
 function treeExpandAll(open) {
   document.querySelectorAll('#resultsScroll details.tree-branch').forEach(d => {
+    // Don't stampede the server: EXPAND ALL must not auto-open unloaded lazy
+    // group nodes (each would fire a members fetch). Object-tree branches and
+    // already-loaded groups expand normally.
+    if (open && d.classList.contains('tree-lazy-group') && !d.dataset.loaded) return;
     d.open = !!open;
     // Clear filter-driven open state so a subsequent filter doesn't re-open
     // things the user just collapsed.
