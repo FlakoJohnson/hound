@@ -1314,7 +1314,7 @@
       </div>
       <div class="drop-zone" id="dropZone"
            ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
-        <input type="file" id="fileInput" accept=".zip,.json" onchange="handleFileInput(event)">
+        <input type="file" id="fileInput" accept=".zip,.json" multiple onchange="handleFileInput(event)">
         <div class="drop-icon">📦</div>
         <div class="drop-title">DROP ZIP / JSON HERE</div>
         <div class="drop-sub">or click to browse — max 512MB</div>
@@ -2316,18 +2316,17 @@ function dragLeave()  { document.getElementById('dropZone').classList.remove('dr
 function dropFile(e) {
   e.preventDefault();
   dragLeave();
-  const f = e.dataTransfer.files[0];
-  if (f) uploadFile(f);
+  const files = [...e.dataTransfer.files];
+  if (files.length) uploadFiles(files);
 }
 
 function handleFileInput(e) {
-  const f = e.target.files[0];
-  // Reset the input so re-selecting the SAME file fires 'change' again —
-  // otherwise back-to-back picks of the same file are silently ignored
-  // (browser only emits 'change' when the value differs), which looked like
-  // the uploader "freezing" until a page refresh.
+  const files = [...e.target.files];
+  // Reset the input so re-selecting the SAME file(s) fires 'change' again —
+  // otherwise back-to-back picks are silently ignored (browser only emits
+  // 'change' when the value differs), which looked like the uploader freezing.
   e.target.value = '';
-  if (f) uploadFile(f);
+  if (files.length) uploadFiles(files);
 }
 
 function fmtTime(epoch) {
@@ -2380,15 +2379,43 @@ async function loadJobHistory() {
   }
 }
 
-async function uploadFile(file) {
+// Upload one or many files. Multiple files are processed SEQUENTIALLY — each
+// finishes importing before the next starts — to avoid concurrent Neo4j write
+// contention and keep progress readable.
+async function uploadFiles(files) {
   const log = document.getElementById('uploadLog');
   log.className = 'upload-log visible';
-  log.innerHTML = `<span class="log-info">⏳ Uploading ${escHtml(file.name)} (${(file.size/1024/1024).toFixed(1)} MB)...</span><br>`;
+  const total = files.length;
+  log.innerHTML = total > 1
+    ? `<span class="log-info">📦 Uploading ${total} files sequentially…</span><br>`
+    : '';
+
+  let ok = 0, failed = 0;
+  for (let i = 0; i < total; i++) {
+    const success = await uploadOne(files[i], i + 1, total);
+    success ? ok++ : failed++;
+    loadJobHistory();
+  }
+
+  if (total > 1) {
+    log.innerHTML += `<span class="log-ok">✓ Batch done — ${ok} succeeded${failed ? `, <span class="log-err">${failed} failed</span>` : ''} of ${total}</span><br>`;
+  }
+  toast(failed ? `${ok}/${total} imported, ${failed} failed` : 'Import successful!', failed ? 'err' : 'ok');
+  await refreshStats();
+  await checkHealth();
+}
+
+// Upload a single file and poll its import job to completion.
+// Returns true on success, false on failure. Appends to the shared log
+// (does not reset it) so a batch shows every file's progress.
+async function uploadOne(file, idx, total) {
+  const log = document.getElementById('uploadLog');
+  const prefix = total > 1 ? `[${idx}/${total}] ` : '';
+  log.innerHTML += `<span class="log-info">⏳ ${prefix}Uploading ${escHtml(file.name)} (${(file.size/1024/1024).toFixed(1)} MB)…</span><br>`;
 
   const fd = new FormData();
   fd.append('file', file);
 
-  // Submit upload — returns immediately with a job_id
   let jobId;
   try {
     const r = await apiFetch('/api/upload', { method: 'POST', body: fd });
@@ -2397,14 +2424,11 @@ async function uploadFile(file) {
     if (d.error) throw new Error(d.error);
     jobId = d.job_id;
   } catch(e) {
-    log.innerHTML += `<span class="log-err">✗ ${escHtml(e.message)}</span><br>`;
-    return;
+    log.innerHTML += `<span class="log-err">✗ ${prefix}${escHtml(e.message)}</span><br>`;
+    return false;
   }
 
-  log.innerHTML += `<span class="log-info">⬆ Received — import running in background...</span><br>`;
   let progressEl = null;
-
-  // Poll for job status
   while (true) {
     await new Promise(res => setTimeout(res, 1000));
     let d;
@@ -2414,43 +2438,36 @@ async function uploadFile(file) {
     } catch(_) { continue; }
 
     if (d.error && !d.status) {
-      log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error)}</span><br>`;
-      break;
+      progressEl?.remove();
+      log.innerHTML += `<span class="log-err">✗ ${prefix}${escHtml(d.error)}</span><br>`;
+      return false;
     }
 
     if (d.status === 'running') {
       const msg = d.current_file
-        ? `⟳ ${escHtml(d.current_file)} [${d.files_done}/${d.files_total || '?'}] — ${(d.nodes||0).toLocaleString()} nodes, ${(d.relationships||0).toLocaleString()} rels`
-        : `⟳ Processing...`;
+        ? `⟳ ${prefix}${escHtml(d.current_file)} [${d.files_done}/${d.files_total || '?'}] — ${(d.nodes||0).toLocaleString()} nodes, ${(d.relationships||0).toLocaleString()} rels`
+        : `⟳ ${prefix}Processing…`;
       if (!progressEl) {
         log.innerHTML += `<span class="log-progress log-info"></span><br>`;
-        progressEl = log.querySelector('.log-progress');
+        progressEl = [...log.querySelectorAll('.log-progress')].pop();
       }
       progressEl.textContent = msg;
     }
 
     if (d.status === 'complete') {
-      progressEl?.parentElement?.remove();
+      progressEl?.remove();
       const res = d.result || {};
-      log.innerHTML += `<span class="log-ok">✓ Import complete</span><br>`;
-      log.innerHTML += `<span class="log-info">  Files: ${(res.files||[]).length}</span><br>`;
-      log.innerHTML += `<span class="log-info">  Nodes: ${(res.nodes||0).toLocaleString()}</span><br>`;
-      log.innerHTML += `<span class="log-info">  Relationships: ${(res.relationships||0).toLocaleString()}</span><br>`;
+      log.innerHTML += `<span class="log-ok">✓ ${prefix}Complete — ${(res.files||[]).length} file(s), ${(res.nodes||0).toLocaleString()} nodes, ${(res.relationships||0).toLocaleString()} rels</span><br>`;
       if (res.errors?.length) {
         log.innerHTML += `<span class="log-err">  Warnings: ${res.errors.slice(0,5).map(escHtml).join('<br>  ')}</span><br>`;
       }
-      toast('Import successful!', 'ok');
-      await refreshStats();
-      await checkHealth();
-      loadJobHistory();
-      break;
+      return true;
     }
 
     if (d.status === 'error') {
-      progressEl?.parentElement?.remove();
-      log.innerHTML += `<span class="log-err">✗ ${escHtml(d.error || 'Import failed')}</span><br>`;
-      loadJobHistory();
-      break;
+      progressEl?.remove();
+      log.innerHTML += `<span class="log-err">✗ ${prefix}${escHtml(d.error || 'Import failed')}</span><br>`;
+      return false;
     }
   }
 }
