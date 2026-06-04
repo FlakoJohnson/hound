@@ -447,14 +447,14 @@ class BloodHoundImporter:
                 if not obj_id:
                     continue
 
-                for ace in obj.get('Aces', []):
+                for ace in (obj.get('Aces') or []):
                     src_id = ace.get('PrincipalSID', '')
                     right  = ace.get('RightName', '')
                     if not src_id or not right or right not in ALLOWED_REL_TYPES:
                         continue
                     ace_rels[right].append({'src': src_id, 'dst': obj_id, 'inh': ace.get('IsInherited', False)})
 
-                for m in obj.get('Members', []):
+                for m in (obj.get('Members') or []):
                     m_id = m.get('ObjectIdentifier', '')
                     if m_id:
                         member_rels.append({'src': m_id, 'dst': obj_id})
@@ -479,17 +479,17 @@ class BloodHoundImporter:
                         if i_id:
                             local_rels[rel].append({'src': i_id, 'dst': obj_id})
 
-                for d in obj.get('AllowedToDelegate', []):
+                for d in (obj.get('AllowedToDelegate') or []):
                     d_id = d.get('ObjectIdentifier', d) if isinstance(d, dict) else d
                     if d_id:
                         delegate_rels.append({'src': obj_id, 'dst': d_id})
 
-                for a in obj.get('AllowedToAct', []):
+                for a in (obj.get('AllowedToAct') or []):
                     a_id = a.get('ObjectIdentifier', a) if isinstance(a, dict) else a
                     if a_id:
                         act_rels.append({'src': a_id, 'dst': obj_id})
 
-                for t in obj.get('Trusts', []):
+                for t in (obj.get('Trusts') or []):
                     t_sid = t.get('TargetDomainSid', t.get('TargetDomainName', ''))
                     if not t_sid:
                         continue
@@ -514,17 +514,17 @@ class BloodHoundImporter:
                     if t_name:
                         trust_targets.append({'sid': t_sid, 'name': t_name.upper()})
 
-                for c in obj.get('ChildObjects', []):
+                for c in (obj.get('ChildObjects') or []):
                     c_id = c.get('ObjectIdentifier', '')
                     if c_id:
                         child_rels.append({'src': obj_id, 'dst': c_id})
 
-                for lnk in obj.get('Links', []):
+                for lnk in (obj.get('Links') or []):
                     gpo_id = lnk.get('GUID', lnk.get('ObjectIdentifier', ''))
                     if gpo_id:
                         gpo_link_rels.append({'src': gpo_id, 'dst': obj_id})
 
-                for h in obj.get('HasSIDHistory', []):
+                for h in (obj.get('HasSIDHistory') or []):
                     h_id = h.get('ObjectIdentifier', h) if isinstance(h, dict) else h
                     if h_id:
                         sid_hist_rels.append({'src': obj_id, 'dst': h_id})
@@ -532,7 +532,7 @@ class BloodHoundImporter:
                 for field, rel in [('IssuedSignedBy', 'IssuedSignedBy'), ('NTAuthStoreFor', 'NTAuthStoreFor'),
                                     ('RootCAFor', 'RootCAFor'), ('TrustedForNTAuth', 'TrustedForNTAuth'),
                                     ('HostsCAService', 'HostsCAService')]:
-                    for target in obj.get(field, []):
+                    for target in (obj.get(field) or []):
                         t_id = target.get('ObjectIdentifier', target) if isinstance(target, dict) else target
                         if t_id:
                             adcs_rels[rel].append({'src': obj_id, 'dst': t_id})
