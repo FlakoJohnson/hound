@@ -2850,6 +2850,10 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
       ${togglePill('User', typeColor.User)}
       ${togglePill('Computer', typeColor.Computer)}
       ${togglePill('GPO', typeColor.GPO)}
+      <span class="tree-controls-sep"></span>
+      ${togglePill('Member(User)', memberColor)}
+      ${togglePill('Member(Group)', memberColor)}
+      ${togglePill('Member(Computer)', memberColor)}
     </div>
     ${body}
   </div>`;
@@ -2911,9 +2915,23 @@ async function lazyLoadGroupMembers(el) {
       }
     }
     ul.innerHTML = h;
+    updateMemberPillCounts();
   } catch(e) {
     ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(e.message)}</span></li>`;
     el.dataset.loaded = '';
+  }
+}
+
+// Member(*) memberships are loaded lazily, so their toggle-pill counts can't be
+// known up front — recompute them from the rows currently rendered in the tree
+// whenever more members are loaded.
+function updateMemberPillCounts() {
+  const root = document.querySelector('#resultsScroll .tree-root');
+  if (!root) return;
+  for (const t of ['Member(User)', 'Member(Group)', 'Member(Computer)']) {
+    const n = root.querySelectorAll(`li[data-type="${t}"]`).length;
+    const pill = root.querySelector(`.tree-toggle-btn[data-toggle-type="${CSS.escape(t)}"] .tree-toggle-count`);
+    if (pill) pill.textContent = n;
   }
 }
 
