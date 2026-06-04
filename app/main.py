@@ -349,6 +349,15 @@ def index():
     return send_from_directory('static', 'index.html')
 
 
+@app.route('/favicon.svg')
+@app.route('/favicon.ico')
+def favicon():
+    # index.html references /favicon.svg at the root path; Flask's static mount
+    # is /static, so serve it explicitly here. Browsers also auto-request
+    # /favicon.ico — modern ones render the SVG fine.
+    return send_from_directory('static', 'favicon.svg', mimetype='image/svg+xml')
+
+
 @app.route('/api/health')
 def health():
     try:
