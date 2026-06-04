@@ -31,8 +31,10 @@ ORDER BY Type, Domain, Name"""
             "id": "domain_trusts",
             "name": "Domain Trust Map",
             "description": "All domain trust relationships — spot cross-domain attack paths",
-            "cypher": """MATCH p=(d1:Domain)-[r:TrustedBy]->(d2:Domain)
-RETURN d1.name AS Domain, d2.name AS TrustedBy,
+            "cypher": """MATCH (d1:Domain)-[r:TrustedBy]->(d2:Domain)
+RETURN coalesce(d1.name, d1.objectid) AS Domain,
+       coalesce(d2.name, d2.objectid) AS TrustedBy,
+       d2.name IS NULL AS TargetUncollected,
        r.trusttype AS TrustType, r.transitive AS Transitive, r.sidfiltering AS SIDFiltering
 ORDER BY Domain"""
         },
