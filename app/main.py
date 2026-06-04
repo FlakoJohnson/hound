@@ -41,8 +41,12 @@ VALID_ROLES = ('user', 'operator', 'admin')
 # Normalise whitespace before checking so newline/tab variants don't bypass
 _WRITE_KEYWORDS = ['SET', 'CREATE', 'MERGE', 'REMOVE', 'DELETE']
 
-# Cypher operations that are always blocked regardless of role
-_BLOCKED_OPS = ['DETACH DELETE', 'DETACHDELETE', 'DROP', 'CALL {', 'CALL{']
+# Cypher operations that are always blocked regardless of role.
+# NOTE: do NOT block `CALL {` — subqueries are a legitimate read pattern (the
+# Containers tree uses CALL { ... UNION ... }). Destructive ops inside a
+# subquery are still caught: the query is whitespace-normalized before this
+# check, so `CALL { MATCH (n) DETACH DELETE n }` still contains 'DETACH DELETE'.
+_BLOCKED_OPS = ['DETACH DELETE', 'DETACHDELETE', 'DROP']
 
 
 @app.after_request
