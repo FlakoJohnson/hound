@@ -436,6 +436,7 @@ class BloodHoundImporter:
             delegate_rels  = []
             act_rels       = []
             trust_rels     = []
+            trust_targets  = []  # {sid, name} to name foreign-domain stubs
             child_rels     = []
             gpo_link_rels  = []
             sid_hist_rels  = []
@@ -507,6 +508,11 @@ class BloodHoundImporter:
                         trust_rels.append({'src': obj_id, 'dst': t_sid, **props})
                     if direction in (_TRUST_DIR_OUTBOUND, _TRUST_DIR_BIDIR):
                         trust_rels.append({'src': t_sid, 'dst': obj_id, **props})
+                    # The trust carries the target's FQDN — use it to name the
+                    # foreign-domain stub so it isn't a nameless SID-only node.
+                    t_name = t.get('TargetDomainName', '')
+                    if t_name:
+                        trust_targets.append({'sid': t_sid, 'name': t_name.upper()})
 
                 for c in obj.get('ChildObjects', []):
                     c_id = c.get('ObjectIdentifier', '')
@@ -584,6 +590,20 @@ class BloodHoundImporter:
                     rels_created += len(trust_rels)
                 except Exception as e:
                     errors.append(f"TrustedBy: {e}")
+
+            # Name foreign-domain stubs from the trust's TargetDomainName so the
+            # trust map shows FQDNs instead of bare SIDs. Only fills NULL names —
+            # never overwrites a collected domain's real name.
+            if trust_targets:
+                try:
+                    session.run("""
+                        UNWIND $targets AS t
+                        MATCH (d:Base {objectid: t.sid})
+                        WHERE d.name IS NULL
+                        SET d:Domain, d.name = t.name, d.domain = t.name
+                    """, targets=trust_targets)
+                except Exception as e:
+                    errors.append(f"Trust target naming: {e}")
 
             for rel, rels in adcs_rels.items():
                 if rels:
