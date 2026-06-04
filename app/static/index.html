@@ -2322,6 +2322,11 @@ function dropFile(e) {
 
 function handleFileInput(e) {
   const f = e.target.files[0];
+  // Reset the input so re-selecting the SAME file fires 'change' again —
+  // otherwise back-to-back picks of the same file are silently ignored
+  // (browser only emits 'change' when the value differs), which looked like
+  // the uploader "freezing" until a page refresh.
+  e.target.value = '';
   if (f) uploadFile(f);
 }
 
