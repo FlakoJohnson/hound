@@ -101,7 +101,7 @@ ORDER BY u.admincount DESC, User"""
             "id": "kerberoastable_path_da",
             "name": "Kerberoastable → DA (Shortest Path)",
             "description": "Kerberoastable users with a path to Domain Admins — high-priority targets",
-            "cypher": """MATCH p=shortestPath((u:User)-[*1..10]->(g:Group))
+            "cypher": """MATCH p=shortestPath((u:User)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..10]->(g:Group))
 WHERE u.hasspn = true AND u.enabled = true
   AND g.name =~ '(?i)domain admins@.*'
 RETURN u.name AS User, u.domain AS Domain,
@@ -445,7 +445,7 @@ ORDER BY Type, Domain, Name"""
             "id": "path_owned_to_da",
             "name": "Owned → Domain Admin (Shortest)",
             "description": "Shortest paths from owned objects to DA — your attack chain",
-            "cypher": """MATCH p=shortestPath((o)-[*1..10]->(g:Group))
+            "cypher": """MATCH p=shortestPath((o)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..10]->(g:Group))
 WHERE o.owned = true AND g.name =~ '(?i)domain admins@.*'
 RETURN o.name AS OwnedNode, [lbl IN labels(o) WHERE lbl <> 'Base'][0] AS Type,
        g.domain AS TargetDomain, length(p) AS Hops
@@ -455,8 +455,8 @@ LIMIT 50"""
         {
             "id": "path_to_hvt",
             "name": "Any → High Value Target (Shortest)",
-            "description": "Shortest paths to all high-value targets from any non-HVT node",
-            "cypher": """MATCH p=shortestPath((n)-[*1..8]->(hvt))
+            "description": "Shortest ATTACK paths to high-value targets from any non-HVT node",
+            "cypher": """MATCH p=shortestPath((n)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..8]->(hvt))
 WHERE hvt.highvalue = true AND n <> hvt AND NOT n.highvalue = true
   AND NOT n:Domain
 RETURN n.name AS Source, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SrcType,
@@ -468,7 +468,7 @@ LIMIT 50"""
             "id": "cross_domain_paths",
             "name": "Cross-Domain Attack Paths",
             "description": "Nodes in one domain with paths to DA in another — cross-forest pivots",
-            "cypher": """MATCH p=shortestPath((n)-[*1..8]->(g:Group))
+            "cypher": """MATCH p=shortestPath((n)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..8]->(g:Group))
 WHERE g.name =~ '(?i)domain admins@.*'
   AND n.domain IS NOT NULL AND n.domain <> g.domain
 RETURN n.name AS Source, n.domain AS SourceDomain,
