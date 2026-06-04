@@ -76,6 +76,39 @@ ALLOWED_REL_TYPES = {
 # Max decompressed bytes from a single ZIP upload (2 GB)
 MAX_DECOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 
+# SharpHound TrustType enum → canonical name. Some collectors emit the integer
+# enum, others emit the string; normalise to the string so trusttype is uniform.
+_TRUST_TYPE_NAMES = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest',
+                     3: 'External', 4: 'Unknown'}
+
+# SharpHound TrustDirection enum.
+_TRUST_DIR_DISABLED, _TRUST_DIR_INBOUND, _TRUST_DIR_OUTBOUND, _TRUST_DIR_BIDIR = 0, 1, 2, 3
+
+
+def _norm_trust_type(v):
+    """Normalise a TrustType value (int enum or string) to a canonical name."""
+    if isinstance(v, bool):
+        return 'Unknown'
+    if isinstance(v, int):
+        return _TRUST_TYPE_NAMES.get(v, str(v))
+    if isinstance(v, str) and v.isdigit():
+        return _TRUST_TYPE_NAMES.get(int(v), v)
+    return v or 'Unknown'
+
+
+def _norm_trust_dir(v):
+    """Normalise a TrustDirection value (int enum or string) to an int 0-3."""
+    if isinstance(v, bool):
+        return _TRUST_DIR_BIDIR
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        if v.isdigit():
+            return int(v)
+        return {'disabled': 0, 'inbound': 1, 'outbound': 2,
+                'bidirectional': 3}.get(v.lower(), _TRUST_DIR_BIDIR)
+    return _TRUST_DIR_BIDIR  # default: assume bidirectional if unknown
+
 FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'container',
                    'certtemplate', 'enterpriseca', 'rootca', 'aiaca', 'ntauthstore',
                    'issuancepolicy']
@@ -457,11 +490,23 @@ class BloodHoundImporter:
 
                 for t in obj.get('Trusts', []):
                     t_sid = t.get('TargetDomainSid', t.get('TargetDomainName', ''))
-                    if t_sid:
-                        trust_rels.append({'src': obj_id, 'dst': t_sid,
-                                           'tt': t.get('TrustType', ''),
-                                           'tr': t.get('IsTransitive', False),
-                                           'sf': t.get('SidFilteringEnabled', False)})
+                    if not t_sid:
+                        continue
+                    # Orient the edge by TrustDirection. BloodHound's TrustedBy:
+                    # (A)-[:TrustedBy]->(B) means B trusts A, so principals in A
+                    # can access B (attack flows A→B). From the collected domain D
+                    # with target T:
+                    #   Inbound  → D is trusted by T → (D)-[:TrustedBy]->(T)
+                    #   Outbound → T is trusted by D → (T)-[:TrustedBy]->(D)
+                    #   Bidirectional → both. Disabled → no traversal, skip.
+                    direction = _norm_trust_dir(t.get('TrustDirection', _TRUST_DIR_BIDIR))
+                    props = {'tt': _norm_trust_type(t.get('TrustType', '')),
+                             'tr': t.get('IsTransitive', False),
+                             'sf': t.get('SidFilteringEnabled', False)}
+                    if direction in (_TRUST_DIR_INBOUND, _TRUST_DIR_BIDIR):
+                        trust_rels.append({'src': obj_id, 'dst': t_sid, **props})
+                    if direction in (_TRUST_DIR_OUTBOUND, _TRUST_DIR_BIDIR):
+                        trust_rels.append({'src': t_sid, 'dst': obj_id, **props})
 
                 for c in obj.get('ChildObjects', []):
                     c_id = c.get('ObjectIdentifier', '')
