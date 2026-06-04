@@ -1,10 +1,8 @@
-version: '3.9'
-
 services:
 
   neo4j:
     image: neo4j:5.20-community
-    container_name: hound-neo4j
+    container_name: hound-standalone-neo4j
     restart: unless-stopped
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASS:-bloodhound}
@@ -28,7 +26,7 @@ services:
 
   hound:
     build: .
-    container_name: hound-app
+    container_name: hound-standalone-app
     restart: unless-stopped
     environment:
       - NEO4J_URI=bolt://neo4j:7687
@@ -48,8 +46,4 @@ services:
 
 volumes:
   neo4j_data:
-    external: true
-    name: bh-query-engine_neo4j_data
   neo4j_logs:
-    external: true
-    name: bh-query-engine_neo4j_logs

@@ -3,4 +3,3 @@ CLAUDE.md
 docs/
 app/__pycache__/
 data/
-docker-compose.override.yml
