@@ -3082,7 +3082,7 @@ async function showObjectDetails(tableId, rowIndex) {
   }
 
   // Build cypher queries to get node props + group memberships in parallel
-  let nodeData = null, groups = [];
+  let nodeData = null, groups = [], members = null;
   try {
     const where = lookupSid
       ? `n.objectid = '${lookupSid}'`
@@ -3102,6 +3102,30 @@ async function showObjectDetails(tableId, rowIndex) {
       const gd = await groupRes.json();
       if (nd.success && nd.data.length > 0) nodeData = { type: nd.data[0]._type, props: nd.data[0].props };
       if (gd.success) groups = gd.data;
+
+      // If the clicked object IS a group, also fetch who's inside it —
+      // direct MemberOf edges, plus an unrolled/effective view that
+      // resolves nested group membership (mirrors BloodHound CE's
+      // "Group Members" node tab).
+      if (nodeData?.type === 'Group') {
+        const groupSid = nodeData.props?.objectid || lookupSid;
+        const groupWhere = groupSid
+          ? `g.objectid = '${groupSid}'`
+          : (lookupName ? `g.name = '${lookupName.replace(/'/g,"\\'")}'` : null);
+        if (groupWhere) {
+          const [directRes, unrolledRes] = await Promise.all([
+            apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf]->(g:Group) WHERE ${groupWhere} RETURN m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+            }),
+            apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+            })
+          ]);
+          const dd = await directRes.json();
+          const ud = await unrolledRes.json();
+          members = { direct: dd.success ? dd.data : [], unrolled: ud.success ? ud.data : [] };
+        }
+      }
     }
   } catch(e) { /* fallback to row data */ }
 
@@ -3120,11 +3144,11 @@ async function showObjectDetails(tableId, rowIndex) {
   const resolvedObjectId = nodeData?.props?.objectid || lookupSid || '';
   document.getElementById('detailsOverlay').dataset.objectid = resolvedObjectId;
 
-  renderObjectDetails(nodeData?.props || null, objectData, groups);
+  renderObjectDetails(nodeData?.props || null, objectData, groups, members);
 }
 
 
-function renderObjectDetails(fullProps, rowData, groups = []) {
+function renderObjectDetails(fullProps, rowData, groups = [], members = null) {
   const content = document.getElementById('detailsContent');
   let html = '';
 
@@ -3154,6 +3178,32 @@ function renderObjectDetails(fullProps, rowData, groups = []) {
       </div>`;
     });
     html += `</div>`;
+  }
+
+  // Group Members (only populated when the clicked object is itself a Group)
+  if (members && (members.direct.length > 0 || members.unrolled.length > 0)) {
+    const renderMemberRows = (list) => list.map(m => {
+      const shortName = m.name ? m.name.split('@')[0] : m.name;
+      const domain    = m.name && m.name.includes('@') ? m.name.split('@')[1] : '';
+      const copyBtn   = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(m.name)}',this);event.stopPropagation();">${getCopyIcon()}</span>`;
+      return `<div class="details-property">
+        <div class="details-value">
+          <span style="color:var(--text3);font-size:11px;margin-right:6px">[${escHtml(m.type || '?')}]</span>${escHtml(shortName)}<span style="color:var(--text3);font-size:11px">@${escHtml(domain)}</span>${copyBtn}
+        </div>
+      </div>`;
+    }).join('') || '<div style="color:var(--text3);padding:8px 0">None.</div>';
+
+    html += `<div class="details-section">
+      <h4 style="display:flex;justify-content:space-between;align-items:center">
+        <span>Group Members</span>
+        <span style="font-size:11px;font-weight:normal">
+          <span id="memberViewDirect" onclick="toggleMemberView('direct')" style="cursor:pointer;color:var(--green);margin-right:10px">Direct (${members.direct.length})</span>
+          <span id="memberViewUnrolled" onclick="toggleMemberView('unrolled')" style="cursor:pointer;color:var(--text3)">Unrolled (${members.unrolled.length})</span>
+        </span>
+      </h4>
+      <div id="memberListDirect">${renderMemberRows(members.direct)}</div>
+      <div id="memberListUnrolled" style="display:none">${renderMemberRows(members.unrolled)}</div>
+    </div>`;
   }
 
   // Full node properties (fetched from Neo4j)
@@ -3217,6 +3267,19 @@ async function saveNote(btn) {
     btn.textContent = orig;
     btn.disabled = false;
   }
+}
+
+function toggleMemberView(mode) {
+  const direct = document.getElementById('memberListDirect');
+  const unrolled = document.getElementById('memberListUnrolled');
+  const btnDirect = document.getElementById('memberViewDirect');
+  const btnUnrolled = document.getElementById('memberViewUnrolled');
+  if (!direct || !unrolled) return;
+  const showDirect = mode === 'direct';
+  direct.style.display = showDirect ? '' : 'none';
+  unrolled.style.display = showDirect ? 'none' : '';
+  btnDirect.style.color = showDirect ? 'var(--green)' : 'var(--text3)';
+  btnUnrolled.style.color = showDirect ? 'var(--text3)' : 'var(--green)';
 }
 
 function closeDetails(event) {
