@@ -459,7 +459,12 @@ class BloodHoundImporter:
                     if m_id:
                         member_rels.append({'src': m_id, 'dst': obj_id})
 
-                pg = obj.get('PrimaryGroupSid', '')
+                # SharpHound and spectral both emit "PrimaryGroupSID" (capital SID).
+                # Reading only "PrimaryGroupSid" silently dropped every implicit
+                # primary-group membership — Domain Users / Domain Computers — so
+                # MemberOf traversals under-reported on every import. Accept either
+                # casing so the inverse typo from another collector can't recur.
+                pg = obj.get('PrimaryGroupSID') or obj.get('PrimaryGroupSid') or ''
                 if pg:
                     primary_rels.append({'src': obj_id, 'dst': pg})
 
