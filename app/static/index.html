@@ -1226,6 +1226,7 @@
       <button class="obj-btn" id="btn-groups" onclick="showObjectStats('Group')">Groups</button>
       <button class="obj-btn" id="btn-domains" onclick="showObjectStats('Domain')">Domains</button>
       <button class="obj-btn" id="btn-containers" onclick="showContainerTree()">Containers</button>
+      <button class="obj-btn" id="btn-export" onclick="exportGraph()" title="Download a BloodHound CE v6 zip of the selected domain — re-ingestible by Hound or BloodHound">Export</button>
     </div>
 
     <div class="sidebar-scroll" id="queryNav"></div>
@@ -2608,6 +2609,47 @@ async function showObjectStats(objectType) {
 
   btn.textContent = originalText;
   btn.disabled = false;
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+// Honours the domain dropdown so a client's data isn't exported alongside lab
+// data. Downloads via a blob rather than navigating, so an error response can be
+// surfaced instead of replacing the page with JSON.
+async function exportGraph() {
+  const btn = document.getElementById('btn-export');
+  const domain = document.getElementById('domainSelect').value;
+  const original = btn.textContent;
+  btn.textContent = 'Exporting…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/export?domain=${encodeURIComponent(domain)}`);
+    if (!resp.ok) {
+      let msg = `Export failed (HTTP ${resp.status})`;
+      try { const j = await resp.json(); if (j.error) msg = `Export failed: ${j.error}`; } catch (e) {}
+      alert(msg);
+      return;
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    const name = m ? m[1] : 'hound_export.zip';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    const n = resp.headers.get('X-Hound-Export-Nodes');
+    btn.textContent = n ? `${n} nodes ✓` : 'Exported ✓';
+    setTimeout(() => { btn.textContent = original; }, 2500);
+  } catch (e) {
+    alert(`Export failed: ${e}`);
+    btn.textContent = original;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Container / OU Hierarchy Tree ──────────────────────────────────────────

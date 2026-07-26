@@ -8,13 +8,14 @@ import threading
 import tempfile
 import uuid
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, session
+from flask import Flask, request, jsonify, send_from_directory, session, Response
 from flask_cors import CORS
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable, AuthError
 from werkzeug.security import generate_password_hash, check_password_hash
 from queries import QUERIES
 from importer import BloodHoundImporter
+from exporter import BloodHoundExporter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -548,6 +549,50 @@ def upload_jobs():
         return jsonify({'error': str(e)}), 500
     jobs.sort(key=lambda j: j.get('started') or 0, reverse=True)
     return jsonify({'jobs': jobs})
+
+
+@app.route('/api/export/domains')
+@require_auth
+def export_domains():
+    """Domains available to export, for the picker."""
+    try:
+        return jsonify({'domains': BloodHoundExporter(get_driver()).domains()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/export')
+@require_auth
+def export_graph():
+    """Stream a BloodHound CE v6 zip of the graph, re-ingestible by Hound or BH CE.
+
+    ?domain=<NAME> exports a single domain; omitted or 'all' exports everything.
+    Built in memory and returned in one response — a graph large enough to need
+    streaming would also need the background-job treatment the importer has, and
+    that can be added if it becomes a problem.
+    """
+    domain = (request.args.get('domain') or '').strip()
+    if domain.lower() in ('', 'all'):
+        domain = None
+    try:
+        blob, stats = BloodHoundExporter(get_driver()).export_zip(domain=domain)
+    except Exception as e:
+        logger.exception('Export failed')
+        return jsonify({'error': str(e)}), 500
+
+    label = (domain or 'all-domains').lower().replace(' ', '_')
+    fname = f'hound_export_{label}_{time.strftime("%Y%m%d_%H%M%S")}.zip'
+    logger.info('Export: domain=%s nodes=%s files=%s',
+                domain or 'all', stats['nodes'], stats['files'])
+    return Response(
+        blob,
+        mimetype='application/zip',
+        headers={
+            'Content-Disposition': f'attachment; filename="{fname}"',
+            'Content-Length': str(len(blob)),
+            'X-Hound-Export-Nodes': str(stats['nodes']),
+        },
+    )
 
 
 @app.route('/api/notes', methods=['POST'])
