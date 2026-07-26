@@ -639,7 +639,14 @@ class BloodHoundImporter:
                 "MATCH (n) CALL { WITH n DELETE n } IN TRANSACTIONS OF 10000 ROWS"
             ).consume()
 
-    def get_stats(self):
+    def get_stats(self, domain=None):
+        """Node/relationship counts, optionally scoped to one domain.
+
+        `domain` is matched against the node's `domain` property. Domain nodes
+        are matched on `name` as well: some collectors leave `domain` unset on
+        the domain object itself, which would otherwise report 0 domains while
+        every other count was non-zero.
+        """
         stats = {}
         # AD object labels — filter `name IS NOT NULL` so the chip count
         # matches what shows up in the list views (which already filter
@@ -651,21 +658,42 @@ class BloodHoundImporter:
         # never stub-created via ACE references, so no filter needed.
         adcs_labels = ['CertTemplate', 'EnterpriseCA', 'RootCA',
                        'AIACA', 'NTAuthStore', 'IssuancePolicy']
+        params = {'domain': domain} if domain else {}
         with self.driver.session() as session:
             for lbl in ad_object_labels:
+                if domain:
+                    scope = ('(n.domain = $domain OR n.name = $domain)'
+                             if lbl == 'Domain' else 'n.domain = $domain')
+                    where = f'WHERE n.name IS NOT NULL AND {scope}'
+                else:
+                    where = 'WHERE n.name IS NOT NULL'
                 try:
-                    r = session.run(f"MATCH (n:{lbl}) WHERE n.name IS NOT NULL RETURN count(n) AS c").single()
+                    r = session.run(
+                        f"MATCH (n:{lbl}) {where} RETURN count(n) AS c",
+                        **params).single()
                     stats[lbl] = r['c'] if r else 0
                 except Exception:
                     stats[lbl] = 0
             for lbl in adcs_labels:
+                where = 'WHERE n.domain = $domain' if domain else ''
                 try:
-                    r = session.run(f"MATCH (n:{lbl}) RETURN count(n) AS c").single()
+                    r = session.run(
+                        f"MATCH (n:{lbl}) {where} RETURN count(n) AS c",
+                        **params).single()
                     stats[lbl] = r['c'] if r else 0
                 except Exception:
                     stats[lbl] = 0
             try:
-                r = session.run("MATCH ()-[r]->() RETURN count(r) AS c").single()
+                if domain:
+                    # A relationship counts as in-scope if either end is in the
+                    # domain, so cross-domain edges are visible from both sides
+                    # rather than vanishing from both.
+                    q = ("MATCH (a)-[r]->(b) "
+                         "WHERE a.domain = $domain OR b.domain = $domain "
+                         "RETURN count(r) AS c")
+                else:
+                    q = "MATCH ()-[r]->() RETURN count(r) AS c"
+                r = session.run(q, **params).single()
                 stats['Relationships'] = r['c'] if r else 0
             except Exception:
                 stats['Relationships'] = 0

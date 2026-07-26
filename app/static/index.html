@@ -1178,13 +1178,13 @@
 <header>
   <div class="logo">
     🐕 JACK HOUND
-    <span>// AD QUERY ENGINE v2.0</span>
   </div>
 
   <div class="stats-bar" id="statsBar">
     <div class="stat-chip"><span>USERS</span><span class="val" id="s-User">–</span></div>
     <div class="stat-chip green"><span>COMPUTERS</span><span class="val" id="s-Computer">–</span></div>
     <div class="stat-chip yellow"><span>GROUPS</span><span class="val" id="s-Group">–</span></div>
+    <div class="stat-chip"><span>OUS</span><span class="val" id="s-OU">–</span></div>
     <div class="stat-chip"><span>CONTAINERS</span><span class="val" id="s-Container">–</span></div>
     <div class="stat-chip"><span>GPOS</span><span class="val" id="s-GPO">–</span></div>
     <div class="stat-chip"><span>DOMAINS</span><span class="val" id="s-Domain">–</span></div>
@@ -1468,10 +1468,14 @@ async function checkHealth() {
 }
 
 async function refreshStats() {
+  // Scope the chips to the domain dropdown so the numbers describe what you're
+  // actually looking at. The selector may not exist yet on first paint.
+  const sel = document.getElementById('domainSelect');
+  const domain = sel ? sel.value : 'all';
   try {
-    const r = await apiFetch('/api/stats');
+    const r = await apiFetch(`/api/stats?domain=${encodeURIComponent(domain)}`);
     const d = await r.json();
-    ['User','Computer','Group','Container','GPO','Domain','Relationships'].forEach(k => {
+    ['User','Computer','Group','OU','Container','GPO','Domain','Relationships'].forEach(k => {
       const el = document.getElementById('s-' + k);
       if (el) el.textContent = (d[k] || 0).toLocaleString();
     });

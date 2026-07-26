@@ -384,9 +384,14 @@ def get_queries():
 @app.route('/api/stats')
 @require_auth
 def get_stats():
+    """Counts for the header chips. ?domain=<NAME> scopes them; 'all' or
+    omitted returns totals across the graph."""
+    domain = (request.args.get('domain') or '').strip()
+    if domain.lower() in ('', 'all'):
+        domain = None
     try:
         imp = BloodHoundImporter(get_driver())
-        return jsonify(imp.get_stats())
+        return jsonify(imp.get_stats(domain=domain))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
