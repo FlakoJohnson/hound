@@ -62,9 +62,19 @@ _MEMBER_TYPES = {'User', 'Computer', 'Group'}
 
 # Properties that exist only inside Hound/BloodHound's own graph and are not part
 # of collected data. Re-exporting them would grow on every round trip.
-_INTERNAL_PROPS = {'system_tags', 'lastseen', 'lastcollected'}
+# hound_notes is operator commentary written by /api/notes. It must never leave
+# in an export: a zip handed to a client or uploaded to a shared BloodHound
+# instance would carry private engagement notes with it.
+_INTERNAL_PROPS = {'system_tags', 'lastseen', 'lastcollected', 'hound_notes'}
 
 _ACL_EXCLUDE_SUFFIX = 'Raw'
+
+# Domain-scope predicate for a node bound as `n`. Domain nodes are matched on
+# `name` too: some collectors leave `domain` unset on the domain object itself,
+# which would silently drop that node and its ACEs from a scoped export while
+# every other object came through. Shared by node and relationship queries so
+# the two can't drift apart.
+_SCOPE = '(n.domain = $domain OR (n:Domain AND n.name = $domain))'
 
 # ACE-derived edge types, i.e. the rights that belong back in a node's Aces list.
 # Identified by type rather than by an r.isacl flag: BloodHound CE's own ingest
@@ -114,7 +124,7 @@ class BloodHoundExporter:
         Keyed by the object identifier of the node the field belongs to, so
         assembling a node is a dict lookup rather than a query per node.
         """
-        dfilter = 'WHERE n.domain = $domain' if domain else ''
+        dfilter = f'WHERE {_SCOPE}' if domain else ''
         params = {'domain': domain} if domain else {}
 
         aces = defaultdict(list)
@@ -279,13 +289,7 @@ class BloodHoundExporter:
 
     def _nodes(self, session, label, domain):
         if domain:
-            # Domain nodes carry their own name rather than a `domain` property
-            # on some collectors, so match either.
-            if label == 'Domain':
-                where = 'WHERE n.name = $domain OR n.domain = $domain'
-            else:
-                where = 'WHERE n.domain = $domain'
-            params = {'domain': domain}
+            where, params = f'WHERE {_SCOPE}', {'domain': domain}
         else:
             where, params = '', {}
         q = f"""
