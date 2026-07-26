@@ -55,6 +55,7 @@
     --glow-c:    0 0 8px #64ffda66, 0 0 20px #64ffda33;
     --glow-g:    0 0 8px #a3e63566, 0 0 20px #a3e63533;
     --glow-r:    0 0 8px #f43f5e66, 0 0 20px #f43f5e33;
+    --glow-o:    0 0 8px #f9731666, 0 0 20px #f9731633;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -161,7 +162,7 @@
   .btn-red    { color: var(--red);    border-color: var(--red);    }
   .btn-red:hover    { background: rgba(244,63,94,.1); box-shadow: var(--glow-r); }
   .btn-orange { color: var(--orange); border-color: var(--orange); }
-  .btn-orange:hover { background: rgba(249,115,22,.1); }
+  .btn-orange:hover { background: rgba(249,115,22,.1); box-shadow: var(--glow-o); }
   .btn:disabled { opacity: .35; cursor: not-allowed; }
 
   /* ── Layout ── */
@@ -1177,13 +1178,13 @@
 <header>
   <div class="logo">
     🐕 JACK HOUND
-    <span>// AD QUERY ENGINE v2.0</span>
   </div>
 
   <div class="stats-bar" id="statsBar">
     <div class="stat-chip"><span>USERS</span><span class="val" id="s-User">–</span></div>
     <div class="stat-chip green"><span>COMPUTERS</span><span class="val" id="s-Computer">–</span></div>
     <div class="stat-chip yellow"><span>GROUPS</span><span class="val" id="s-Group">–</span></div>
+    <div class="stat-chip"><span>OUS</span><span class="val" id="s-OU">–</span></div>
     <div class="stat-chip"><span>CONTAINERS</span><span class="val" id="s-Container">–</span></div>
     <div class="stat-chip"><span>GPOS</span><span class="val" id="s-GPO">–</span></div>
     <div class="stat-chip"><span>DOMAINS</span><span class="val" id="s-Domain">–</span></div>
@@ -1196,6 +1197,7 @@
 
   <div class="header-actions">
     <button class="btn btn-orange" id="importBtn" onclick="showTab('upload')">⬆ IMPORT</button>
+    <button class="btn btn-green"  id="exportBtn" onclick="exportGraph()" title="Download a BloodHound CE v6 zip of the selected domain — re-ingestible by Hound or BloodHound">⬇ EXPORT</button>
     <button class="btn btn-red"    id="clearBtn"  onclick="clearDB()">⚡ CLEAR DB</button>
     <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
     <button class="btn btn-cyan"   id="usersBtn" onclick="openUsers()" style="display:none">⚙ USERS</button>
@@ -1466,10 +1468,14 @@ async function checkHealth() {
 }
 
 async function refreshStats() {
+  // Scope the chips to the domain dropdown so the numbers describe what you're
+  // actually looking at. The selector may not exist yet on first paint.
+  const sel = document.getElementById('domainSelect');
+  const domain = sel ? sel.value : 'all';
   try {
-    const r = await apiFetch('/api/stats');
+    const r = await apiFetch(`/api/stats?domain=${encodeURIComponent(domain)}`);
     const d = await r.json();
-    ['User','Computer','Group','Container','GPO','Domain','Relationships'].forEach(k => {
+    ['User','Computer','Group','OU','Container','GPO','Domain','Relationships'].forEach(k => {
       const el = document.getElementById('s-' + k);
       if (el) el.textContent = (d[k] || 0).toLocaleString();
     });
@@ -2608,6 +2614,47 @@ async function showObjectStats(objectType) {
 
   btn.textContent = originalText;
   btn.disabled = false;
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+// Honours the domain dropdown so a client's data isn't exported alongside lab
+// data. Downloads via a blob rather than navigating, so an error response can be
+// surfaced instead of replacing the page with JSON.
+async function exportGraph() {
+  const btn = document.getElementById('exportBtn');
+  const domain = document.getElementById('domainSelect').value;
+  const original = btn.textContent;
+  btn.textContent = '⬇ EXPORTING…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/export?domain=${encodeURIComponent(domain)}`);
+    if (!resp.ok) {
+      let msg = `Export failed (HTTP ${resp.status})`;
+      try { const j = await resp.json(); if (j.error) msg = `Export failed: ${j.error}`; } catch (e) {}
+      alert(msg);
+      return;
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    const name = m ? m[1] : 'hound_export.zip';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    const n = resp.headers.get('X-Hound-Export-Nodes');
+    btn.textContent = n ? `✓ ${n} NODES` : '✓ EXPORTED';
+    setTimeout(() => { btn.textContent = original; }, 2500);
+  } catch (e) {
+    alert(`Export failed: ${e}`);
+    btn.textContent = original;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Container / OU Hierarchy Tree ──────────────────────────────────────────
