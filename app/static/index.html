@@ -1196,6 +1196,7 @@
 
   <div class="header-actions">
     <button class="btn btn-orange" id="importBtn" onclick="showTab('upload')">⬆ IMPORT</button>
+    <button class="btn btn-green"  id="exportBtn" onclick="exportGraph()" title="Download a BloodHound CE v6 zip of the selected domain — re-ingestible by Hound or BloodHound">⬇ EXPORT</button>
     <button class="btn btn-red"    id="clearBtn"  onclick="clearDB()">⚡ CLEAR DB</button>
     <button class="btn btn-cyan"   onclick="refreshStats()">↻ REFRESH</button>
     <button class="btn btn-cyan"   id="usersBtn" onclick="openUsers()" style="display:none">⚙ USERS</button>
@@ -1226,7 +1227,6 @@
       <button class="obj-btn" id="btn-groups" onclick="showObjectStats('Group')">Groups</button>
       <button class="obj-btn" id="btn-domains" onclick="showObjectStats('Domain')">Domains</button>
       <button class="obj-btn" id="btn-containers" onclick="showContainerTree()">Containers</button>
-      <button class="obj-btn" id="btn-export" onclick="exportGraph()" title="Download a BloodHound CE v6 zip of the selected domain — re-ingestible by Hound or BloodHound">Export</button>
     </div>
 
     <div class="sidebar-scroll" id="queryNav"></div>
@@ -2616,10 +2616,10 @@ async function showObjectStats(objectType) {
 // data. Downloads via a blob rather than navigating, so an error response can be
 // surfaced instead of replacing the page with JSON.
 async function exportGraph() {
-  const btn = document.getElementById('btn-export');
+  const btn = document.getElementById('exportBtn');
   const domain = document.getElementById('domainSelect').value;
   const original = btn.textContent;
-  btn.textContent = 'Exporting…';
+  btn.textContent = '⬇ EXPORTING…';
   btn.disabled = true;
   try {
     const resp = await fetch(`/api/export?domain=${encodeURIComponent(domain)}`);
@@ -2642,7 +2642,7 @@ async function exportGraph() {
     a.remove();
     URL.revokeObjectURL(url);
     const n = resp.headers.get('X-Hound-Export-Nodes');
-    btn.textContent = n ? `${n} nodes ✓` : 'Exported ✓';
+    btn.textContent = n ? `✓ ${n} NODES` : '✓ EXPORTED';
     setTimeout(() => { btn.textContent = original; }, 2500);
   } catch (e) {
     alert(`Export failed: ${e}`);
