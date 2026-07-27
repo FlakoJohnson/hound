@@ -25,6 +25,8 @@ import logging
 from io import BytesIO
 from collections import defaultdict
 
+from graphquery import DOMAIN_SCOPE
+
 logger = logging.getLogger(__name__)
 
 # meta.methods values mirror what SharpHound/spectral emit per file type. These
@@ -69,12 +71,9 @@ _INTERNAL_PROPS = {'system_tags', 'lastseen', 'lastcollected', 'hound_notes'}
 
 _ACL_EXCLUDE_SUFFIX = 'Raw'
 
-# Domain-scope predicate for a node bound as `n`. Domain nodes are matched on
-# `name` too: some collectors leave `domain` unset on the domain object itself,
-# which would silently drop that node and its ACEs from a scoped export while
-# every other object came through. Shared by node and relationship queries so
-# the two can't drift apart.
-_SCOPE = '(n.domain = $domain OR (n:Domain AND n.name = $domain))'
+# Shared with the stats counters so the two can't drift apart — they already had
+# subtly different Domain-node handling before this was extracted.
+_SCOPE = DOMAIN_SCOPE
 
 # ACE-derived edge types, i.e. the rights that belong back in a node's Aces list.
 # Identified by type rather than by an r.isacl flag: BloodHound CE's own ingest
@@ -366,34 +365,49 @@ class BloodHoundExporter:
 
     # ── entry point ───────────────────────────────────────────────────────────
 
-    def export_zip(self, domain=None, progress_cb=None):
-        """Build a BloodHound CE v6 zip in memory. Returns (bytes, stats)."""
+    def export_zip(self, domain=None, progress_cb=None, out_path=None):
+        """Build a BloodHound CE v6 zip.
+
+        With out_path, writes to that file and returns (None, stats) so the
+        response can stream from disk instead of holding the whole archive in
+        memory. Without it, returns (bytes, stats) — convenient for callers and
+        tests working with small graphs.
+        """
         stats = {'files': {}, 'nodes': 0}
-        buf = BytesIO()
+        buf = open(out_path, 'wb') if out_path else BytesIO()
 
-        with self.driver.session() as session:
-            edges = self._collect_edges(session, domain)
-            trusts = self._collect_trusts(session, domain)
+        try:
+            with self.driver.session() as session:
+                edges = self._collect_edges(session, domain)
+                trusts = self._collect_trusts(session, domain)
 
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for idx, (label, kind) in enumerate(_EXPORTS):
-                    if progress_cb:
-                        progress_cb(kind, idx, len(_EXPORTS))
-                    data = [self._build(label, props, edges, trusts)
-                            for props, _labels in self._nodes(session, label, domain)]
-                    payload = {
-                        'data': data,
-                        'meta': {
-                            'methods': _METHODS.get(kind, 0),
-                            'type': kind,
-                            'count': len(data),
-                            'version': 6,
-                        },
-                    }
-                    zf.writestr(f'{kind}.json',
-                                json.dumps(payload, separators=(',', ':')))
-                    stats['files'][kind] = len(data)
-                    stats['nodes'] += len(data)
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for idx, (label, kind) in enumerate(_EXPORTS):
+                        if progress_cb:
+                            progress_cb(kind, idx, len(_EXPORTS))
+                        data = [self._build(label, props, edges, trusts)
+                                for props, _labels in self._nodes(session, label, domain)]
+                        payload = {
+                            'data': data,
+                            'meta': {
+                                'methods': _METHODS.get(kind, 0),
+                                'type': kind,
+                                'count': len(data),
+                                'version': 6,
+                            },
+                        }
+                        zf.writestr(f'{kind}.json',
+                                    json.dumps(payload, separators=(',', ':')))
+                        stats['files'][kind] = len(data)
+                        stats['nodes'] += len(data)
+                        # Each file's node dicts and serialised JSON are the
+                        # memory peak; drop them before building the next one.
+                        del data, payload
 
-        buf.seek(0)
-        return buf.getvalue(), stats
+            if out_path:
+                return None, stats
+            buf.seek(0)
+            return buf.getvalue(), stats
+        finally:
+            if out_path:
+                buf.close()

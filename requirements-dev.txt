@@ -1,0 +1,4 @@
+# Test-only dependencies. Not installed into the runtime image.
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   NEO4J_URI=bolt://localhost:7687 NEO4J_PASS=... python -m pytest tests/ -v
+pytest==8.3.3

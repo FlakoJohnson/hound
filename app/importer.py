@@ -547,7 +547,16 @@ class BloodHoundImporter:
 
             for right, rels in ace_rels.items():
                 try:
-                    session.run(f"{_SIMPLE} MERGE (a)-[rel:{right}]->(b) SET rel.isinherited = r.inh", rels=rels)
+                    # isacl marks this edge as ACE-derived, matching what
+                    # BloodHound CE's own ingest sets. Without it, any query
+                    # written against BloodHound — its docs, the community, the
+                    # shipped query library — silently returns nothing here,
+                    # because `WHERE r.isacl = true` is the idiomatic way to say
+                    # "any ACL edge" without enumerating ~25 right names.
+                    session.run(
+                        f"{_SIMPLE} MERGE (a)-[rel:{right}]->(b) "
+                        "SET rel.isinherited = r.inh, rel.isacl = true",
+                        rels=rels)
                     rels_created += len(rels)
                 except Exception as e:
                     errors.append(f"ACE {right}: {e}")
@@ -638,63 +647,3 @@ class BloodHoundImporter:
             session.run(
                 "MATCH (n) CALL { WITH n DELETE n } IN TRANSACTIONS OF 10000 ROWS"
             ).consume()
-
-    def get_stats(self, domain=None):
-        """Node/relationship counts, optionally scoped to one domain.
-
-        `domain` is matched against the node's `domain` property. Domain nodes
-        are matched on `name` as well: some collectors leave `domain` unset on
-        the domain object itself, which would otherwise report 0 domains while
-        every other count was non-zero.
-        """
-        stats = {}
-        # AD object labels — filter `name IS NOT NULL` so the chip count
-        # matches what shows up in the list views (which already filter
-        # out namespaced BUILTIN-group stubs and other name-less ACE
-        # reference targets).
-        ad_object_labels = ['User', 'Computer', 'Group', 'Domain', 'GPO',
-                            'OU', 'Container']
-        # ADCS labels — these are only imported from their own JSON files,
-        # never stub-created via ACE references, so no filter needed.
-        adcs_labels = ['CertTemplate', 'EnterpriseCA', 'RootCA',
-                       'AIACA', 'NTAuthStore', 'IssuancePolicy']
-        params = {'domain': domain} if domain else {}
-        with self.driver.session() as session:
-            for lbl in ad_object_labels:
-                if domain:
-                    scope = ('(n.domain = $domain OR n.name = $domain)'
-                             if lbl == 'Domain' else 'n.domain = $domain')
-                    where = f'WHERE n.name IS NOT NULL AND {scope}'
-                else:
-                    where = 'WHERE n.name IS NOT NULL'
-                try:
-                    r = session.run(
-                        f"MATCH (n:{lbl}) {where} RETURN count(n) AS c",
-                        **params).single()
-                    stats[lbl] = r['c'] if r else 0
-                except Exception:
-                    stats[lbl] = 0
-            for lbl in adcs_labels:
-                where = 'WHERE n.domain = $domain' if domain else ''
-                try:
-                    r = session.run(
-                        f"MATCH (n:{lbl}) {where} RETURN count(n) AS c",
-                        **params).single()
-                    stats[lbl] = r['c'] if r else 0
-                except Exception:
-                    stats[lbl] = 0
-            try:
-                if domain:
-                    # A relationship counts as in-scope if either end is in the
-                    # domain, so cross-domain edges are visible from both sides
-                    # rather than vanishing from both.
-                    q = ("MATCH (a)-[r]->(b) "
-                         "WHERE a.domain = $domain OR b.domain = $domain "
-                         "RETURN count(r) AS c")
-                else:
-                    q = "MATCH ()-[r]->() RETURN count(r) AS c"
-                r = session.run(q, **params).single()
-                stats['Relationships'] = r['c'] if r else 0
-            except Exception:
-                stats['Relationships'] = 0
-        return stats

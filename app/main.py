@@ -16,6 +16,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from queries import QUERIES
 from importer import BloodHoundImporter
 from exporter import BloodHoundExporter
+from graphquery import get_stats as graph_stats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -390,8 +391,7 @@ def get_stats():
     if domain.lower() in ('', 'all'):
         domain = None
     try:
-        imp = BloodHoundImporter(get_driver())
-        return jsonify(imp.get_stats(domain=domain))
+        return jsonify(graph_stats(get_driver(), domain=domain))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -572,29 +572,53 @@ def export_graph():
     """Stream a BloodHound CE v6 zip of the graph, re-ingestible by Hound or BH CE.
 
     ?domain=<NAME> exports a single domain; omitted or 'all' exports everything.
-    Built in memory and returned in one response — a graph large enough to need
-    streaming would also need the background-job treatment the importer has, and
-    that can be added if it becomes a problem.
+
+    The archive is built into a temp file and streamed from disk, so a large
+    graph doesn't sit in memory as one bytes object on top of the per-file JSON
+    already needed to build it.
     """
     domain = (request.args.get('domain') or '').strip()
     if domain.lower() in ('', 'all'):
         domain = None
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    tmp.close()
     try:
-        blob, stats = BloodHoundExporter(get_driver()).export_zip(domain=domain)
+        _, stats = BloodHoundExporter(get_driver()).export_zip(
+            domain=domain, out_path=tmp.name)
     except Exception as e:
+        os.unlink(tmp.name)
         logger.exception('Export failed')
         return jsonify({'error': str(e)}), 500
 
     label = (domain or 'all-domains').lower().replace(' ', '_')
     fname = f'hound_export_{label}_{time.strftime("%Y%m%d_%H%M%S")}.zip'
-    logger.info('Export: domain=%s nodes=%s files=%s',
-                domain or 'all', stats['nodes'], stats['files'])
+    size = os.path.getsize(tmp.name)
+    logger.info('Export: domain=%s nodes=%s bytes=%s files=%s',
+                domain or 'all', stats['nodes'], size, stats['files'])
+
+    def _stream():
+        # Delete on the way out so the temp file can't outlive the response,
+        # including when the client disconnects mid-download.
+        try:
+            with open(tmp.name, 'rb') as fh:
+                while True:
+                    chunk = fh.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                logger.warning('Could not remove export temp file %s', tmp.name)
+
     return Response(
-        blob,
+        _stream(),
         mimetype='application/zip',
         headers={
             'Content-Disposition': f'attachment; filename="{fname}"',
-            'Content-Length': str(len(blob)),
+            'Content-Length': str(size),
             'X-Hound-Export-Nodes': str(stats['nodes']),
         },
     )

@@ -1,5 +1,5 @@
 .env
 CLAUDE.md
 docs/
-app/__pycache__/
+__pycache__/
 data/
