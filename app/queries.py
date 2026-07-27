@@ -179,10 +179,16 @@ ORDER BY Domain, User"""
         {
             "id": "dcsync",
             "name": "DCSync Rights",
-            "description": "Principals with GetChanges+GetChangesAll on a Domain — instant NTDS dump",
-            "cypher": """MATCH (n)-[:DCSync|GetChanges|GetChangesAll]->(d:Domain)
+            "description": "Principals that can DCSync a Domain — instant NTDS dump",
+            # Matches BloodHound's own DCSync query. The previous version listed
+            # GetChanges|GetChangesAll separately, which both over- and
+            # under-reported: GetChanges alone cannot DCSync (false positive),
+            # while AllExtendedRights / GenericAll on the domain confer it and
+            # were missed (false negative). DCSync itself is synthesized at
+            # import from the GetChanges + GetChangesAll pair.
+            "cypher": """MATCH (n)-[r:DCSync|AllExtendedRights|GenericAll]->(d:Domain)
 RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
-       d.name AS Domain
+       collect(DISTINCT type(r)) AS Via, d.name AS Domain
 ORDER BY Domain, Principal"""
         },
         {

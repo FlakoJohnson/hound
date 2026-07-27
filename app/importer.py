@@ -335,7 +335,40 @@ class BloodHoundImporter:
         # Catches SharpHound-style data where node properties / ChildObjects are sparse.
         # Both passes are idempotent, so re-uploads don't grow the graph.
         self._backfill_from_dn()
+        self._synthesize_dcsync()
         return results
+
+    def _synthesize_dcsync(self):
+        """Create the composite DCSync edge, as BloodHound's analysis does.
+
+        DCSync needs GetChanges *and* GetChangesAll on the domain; neither alone
+        is enough. No collector emits a literal DCSync ACE — BloodHound computes
+        the edge during post-processing, and Hound had no equivalent step, so
+        every DCSync query written against BloodHound (including its own shipped
+        one, `[:DCSync|AllExtendedRights|GenericAll]->(:Domain)`) matched nothing
+        here while the underlying rights were sitting in the graph.
+
+        AllExtendedRights / GenericAll also confer DCSync, but BloodHound leaves
+        those as their own edges and unions them in the query rather than folding
+        them into DCSync, so this matches that convention exactly.
+
+        Marked `synthesized` so the exporter can leave it out: it is derived, and
+        writing it into an export would assert an ACE that AD does not have.
+        MERGE keeps repeat runs a no-op.
+        """
+        try:
+            with self.driver.session() as session:
+                r = session.run("""
+                MATCH (n)-[:GetChanges]->(d:Domain)
+                WHERE (n)-[:GetChangesAll]->(d)
+                MERGE (n)-[rel:DCSync]->(d)
+                SET rel.synthesized = true
+                RETURN count(rel) AS created
+                """).single()
+                if r and r['created']:
+                    logger.info(f"DCSync edges present for {r['created']} principal(s)")
+        except Exception as e:
+            logger.warning(f"DCSync synthesis failed: {e}")
 
     def _sort_key(self, fname):
         fname_lower = fname.lower()

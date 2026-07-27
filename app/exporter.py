@@ -5,7 +5,9 @@ This is the inverse of importer.py, and the two must stay in step: the importer
 flattens BloodHound's nested JSON into nodes + typed relationships, so exporting
 means re-nesting relationships back into the fields they came from.
 
-    Aces          <- incoming ACL edges         (r.isacl = true)
+    Aces          <- incoming ACL edges, excluding synthesized ones
+                     (DCSync is derived by post-processing, not collected —
+                      exporting it would assert an ACE that AD does not have)
     Members       <- (member)-[:MemberOf]->(group), excluding primary-group edges
     PrimaryGroupSID <- (n)-[:MemberOf {isprimarygroup:true}]->(group)
     ChildObjects  <- (parent)-[:Contains]->(child)
@@ -133,6 +135,7 @@ class BloodHoundExporter:
         WITH p, r, n
         WHERE (type(r) IN $acl_rights OR r.isacl = true)
           AND NOT type(r) ENDS WITH '{_ACL_EXCLUDE_SUFFIX}'
+          AND coalesce(r.synthesized, false) = false
         RETURN n.objectid AS target, p.objectid AS principal,
                labels(p) AS plabels, type(r) AS right,
                coalesce(r.isinherited, false) AS inherited

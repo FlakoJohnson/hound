@@ -68,6 +68,11 @@ def _fixture_zip():
     admins = f'{TEST_SID}-512'
     comp = f'{TEST_SID}-1002'
     ou = 'OU-ROUNDTRIP-0001'
+    # syncer holds both replication rights, so DCSync must be synthesized for it.
+    # halfsync holds only GetChanges, which alone cannot DCSync — it must not get
+    # the edge. That pair is the whole point of the composite.
+    syncer = f'{TEST_SID}-1003'
+    halfsync = f'{TEST_SID}-1004'
 
     # The explicit membership deliberately targets a *different* group from the
     # primary one. Both kinds of membership become the same (a)-[:MemberOf]->(b)
@@ -80,18 +85,38 @@ def _fixture_zip():
         'domains.json': [{
             'ObjectIdentifier': TEST_SID,
             'Properties': _props(TEST_SID, TEST_DOMAIN, machineaccountquota=10),
-            'Aces': [{'PrincipalSID': user, 'PrincipalType': 'User',
-                      'RightName': 'GenericAll', 'IsInherited': False}],
+            'Aces': [
+                {'PrincipalSID': user, 'PrincipalType': 'User',
+                 'RightName': 'GenericAll', 'IsInherited': False},
+                {'PrincipalSID': syncer, 'PrincipalType': 'User',
+                 'RightName': 'GetChanges', 'IsInherited': False},
+                {'PrincipalSID': syncer, 'PrincipalType': 'User',
+                 'RightName': 'GetChangesAll', 'IsInherited': False},
+                {'PrincipalSID': halfsync, 'PrincipalType': 'User',
+                 'RightName': 'GetChanges', 'IsInherited': False},
+            ],
             'ChildObjects': [{'ObjectIdentifier': ou, 'ObjectType': 'OU'}],
             'Links': [], 'Trusts': [],
         }],
-        'users.json': [{
-            'ObjectIdentifier': user,
-            'Properties': _props(user, f'ALICE@{TEST_DOMAIN}'),
-            # The casing that silently dropped every implicit membership.
-            'PrimaryGroupSID': grp,
-            'Aces': [],
-        }],
+        'users.json': [
+            {
+                'ObjectIdentifier': user,
+                'Properties': _props(user, f'ALICE@{TEST_DOMAIN}'),
+                # The casing that silently dropped every implicit membership.
+                'PrimaryGroupSID': grp,
+                'Aces': [],
+            },
+            {
+                'ObjectIdentifier': syncer,
+                'Properties': _props(syncer, f'SYNCER@{TEST_DOMAIN}'),
+                'Aces': [],
+            },
+            {
+                'ObjectIdentifier': halfsync,
+                'Properties': _props(halfsync, f'HALFSYNC@{TEST_DOMAIN}'),
+                'Aces': [],
+            },
+        ],
         'computers.json': [{
             'ObjectIdentifier': comp,
             'Properties': _props(comp, f'PC1.{TEST_DOMAIN}'),
@@ -163,7 +188,38 @@ def test_ace_edges_are_marked_isacl(imported):
     with imported.session() as s:
         n = s.run('MATCH ()-[r]->(b) WHERE b.domain = $d AND r.isacl = true '
                   'RETURN count(r) AS c', d=TEST_DOMAIN).single()['c']
-    assert n == 2, 'GenericAll on the domain and WriteDacl on the computer'
+    assert n == 5, '4 domain ACEs + WriteDacl on the computer'
+
+
+def test_dcsync_is_synthesized_only_for_both_rights(imported):
+    """DCSync needs GetChanges AND GetChangesAll; either alone must not qualify."""
+    with imported.session() as s:
+        holders = [r['n'] for r in s.run(
+            'MATCH (n)-[:DCSync]->(d:Domain) WHERE d.domain = $d '
+            'RETURN n.name AS n', d=TEST_DOMAIN)]
+    assert holders == [f'SYNCER@{TEST_DOMAIN}'], \
+        'only the principal holding both replication rights'
+
+
+def test_bloodhound_dcsync_query_works_verbatim(imported):
+    """BloodHound's own shipped query must return results against Hound."""
+    with imported.session() as s:
+        rows = [r['n'] for r in s.run(
+            'MATCH (n)-[:DCSync|AllExtendedRights|GenericAll]->(d:Domain) '
+            'WHERE d.domain = $d RETURN DISTINCT n.name AS n', d=TEST_DOMAIN)]
+    assert sorted(rows) == sorted([f'SYNCER@{TEST_DOMAIN}', f'ALICE@{TEST_DOMAIN}'])
+
+
+def test_synthesized_edges_are_not_exported_as_aces(imported):
+    """A derived DCSync edge must not become a fabricated ACE in an export."""
+    blob, _ = BloodHoundExporter(imported).export_zip(domain=TEST_DOMAIN)
+    z = zipfile.ZipFile(io.BytesIO(blob))
+    rights = [a['RightName']
+              for name in z.namelist()
+              for obj in json.loads(z.read(name))['data']
+              for a in (obj.get('Aces') or [])]
+    assert 'DCSync' not in rights
+    assert 'GetChanges' in rights and 'GetChangesAll' in rights
 
 
 def test_export_matches_graph(imported):
@@ -179,8 +235,10 @@ def test_export_matches_graph(imported):
             if obj.get('PrimaryGroupSID'):
                 primary += 1
 
-    assert stats['nodes'] == 6
-    assert aces == 2
+    assert stats['nodes'] == 8
+    # GenericAll + 3 replication ACEs on the domain, WriteDacl on the computer.
+    # The synthesized DCSync edge must NOT appear as a fifth.
+    assert aces == 5
     assert primary == 2, 'primary group belongs on the member, not in Members'
     assert members == 1, 'only the explicit Domain Admins membership'
     assert children == 2
@@ -219,7 +277,7 @@ def test_roundtrip_is_idempotent(imported):
 
 def test_stats_scope_to_domain(imported):
     scoped = get_stats(imported, domain=TEST_DOMAIN)
-    assert scoped['User'] == 1
+    assert scoped['User'] == 3
     assert scoped['Computer'] == 1
     assert scoped['OU'] == 1
     assert scoped['Domain'] == 1
