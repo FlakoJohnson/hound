@@ -461,13 +461,42 @@ LIMIT 50"""
         {
             "id": "path_to_hvt",
             "name": "Any → High Value Target (Shortest)",
-            "description": "Shortest ATTACK paths to high-value targets from any non-HVT node",
+            "description": "Non-privileged principals with a path to a high-value target, ranked by how much they reach",
+            # Three fixes over the naive version:
+            #
+            # 1. `NOT n.highvalue = true` silently dropped every node with no
+            #    highvalue property: NOT (NULL = true) is NULL, which WHERE
+            #    filters out — it is not the same as true. That hid exactly the
+            #    interesting sources, including unresolved SID stubs left behind
+            #    by deleted accounts whose ACEs still grant DCSync. coalesce()
+            #    makes both sides NULL-safe.
+            # 2. Well-known principals (SYSTEM, NETWORK SERVICE, the BUILTIN
+            #    groups) hold privileged rights by design and drowned out real
+            #    findings. They are namespaced <DOMAIN>-S-1-5-… on import, so
+            #    requiring a S-1-5-21- prefix keeps only real domain principals.
+            # 3. One source with broad rights emitted thousands of near-identical
+            #    path rows. Aggregating per source answers the question actually
+            #    being asked — who can reach privileged objects, and how many —
+            #    instead of burying it.
+            # 4. Domain controllers control the domain by design. Hound has no
+            #    Tier Zero tagging to exclude them the way BloodHound does, so
+            #    they are filtered on isdc.
+            # Sources are shown by objectid when nameless: those are unresolved
+            # SIDs from deleted accounts whose ACEs survive them, which is a
+            # finding rather than something to hide.
             "cypher": """MATCH p=shortestPath((n)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..8]->(hvt))
-WHERE hvt.highvalue = true AND n <> hvt AND NOT n.highvalue = true
-  AND NOT n:Domain
-RETURN n.name AS Source, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SrcType,
-       hvt.name AS HVT, [lbl IN labels(hvt) WHERE lbl <> 'Base'][0] AS HVTType, length(p) AS Hops
-ORDER BY Hops, HVT
+WHERE coalesce(hvt.highvalue, false) = true
+  AND coalesce(n.highvalue, false) = false
+  AND n <> hvt AND NOT n:Domain
+  AND n.objectid STARTS WITH 'S-1-5-21-'
+  AND coalesce(n.enabled, true) = true
+  AND coalesce(n.isdc, false) = false
+RETURN coalesce(n.name, n.objectid) AS Source,
+       [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SrcType,
+       count(DISTINCT hvt) AS TargetsReached,
+       min(length(p)) AS MinHops,
+       collect(DISTINCT hvt.name)[0..5] AS SampleTargets
+ORDER BY TargetsReached DESC, MinHops
 LIMIT 50"""
         },
         {
