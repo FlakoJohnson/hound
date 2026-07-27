@@ -125,10 +125,10 @@ ORDER BY u.admincount DESC, User"""
             "description": "Non-DC computers with unconstrained delegation — Printer Bug / SpoolSample bait",
             "cypher": """MATCH (c:Computer)
 WHERE c.unconstraineddelegation = true AND c.enabled = true
-AND NOT EXISTS {
-  MATCH (c)-[:MemberOf*1..5]->(:Group)
-  WHERE toLower(toString(c.name)) CONTAINS 'dc'
-}
+  AND coalesce(c.isdc, false) = false
+  AND NOT EXISTS {
+    MATCH (c)-[:MemberOf]->(g:Group) WHERE g.objectid ENDS WITH '-516'
+  }
 RETURN c.name AS Computer, c.domain AS Domain,
        c.operatingsystem AS OS, c.dnshostname AS DNS
 ORDER BY Domain, Computer"""
