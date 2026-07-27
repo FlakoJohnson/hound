@@ -120,6 +120,25 @@ FILE_TYPE_ORDER = ['domain', 'group', 'user', 'computer', 'gpo', 'ou', 'containe
 DN_DOMAIN_LABELS = {'User', 'Computer', 'Group', 'Domain', 'GPO', 'OU', 'Container'}
 
 
+# BUILTIN local groups, by the RID their SID ends in, and the edge each implies.
+# BloodHound emits these under LocalGroups[] with ObjectIdentifier
+# "<computerSID>-<RID>" and derives the edges in post-processing. The legacy
+# per-field arrays (LocalAdmins / RemoteDesktopUsers / …) are gone from v6 data,
+# so reading only those produced zero lateral-movement edges from any current
+# collection — silently, since the queries still ran fine and returned nothing.
+LOCAL_GROUP_RID_EDGES = {
+    '-544': 'AdminTo',       # Administrators
+    '-555': 'CanRDP',        # Remote Desktop Users
+    '-562': 'ExecuteDCOM',   # Distributed COM Users
+    '-580': 'CanPSRemote',   # Remote Management Users
+}
+
+# BloodHound gates CanRDP on this privilege when User Rights Assignment data was
+# collected: membership of Remote Desktop Users does not grant access if the
+# right has been withdrawn on that host.
+RDP_PRIVILEGE = 'SeRemoteInteractiveLogonRight'
+
+
 def _domain_from_dn(dn):
     """Derive a domain FQDN from a distinguished name.
     'CN=Users,DC=FTBCO,DC=FTN,DC=COM' → 'FTBCO.FTN.COM'
@@ -508,6 +527,7 @@ class BloodHoundImporter:
                     if u_id:
                         session_rels.append({'src': u_id, 'dst': obj_id})
 
+                # Legacy per-field arrays, still emitted by older collectors.
                 for field, rel in [('LocalAdmins', 'AdminTo'), ('RemoteDesktopUsers', 'CanRDP'),
                                     ('PSRemoteUsers', 'CanPSRemote'), ('DcomUsers', 'ExecuteDCOM')]:
                     col = obj.get(field, {})
@@ -516,6 +536,38 @@ class BloodHoundImporter:
                         i_id = item.get('ObjectIdentifier', '')
                         if i_id:
                             local_rels[rel].append({'src': i_id, 'dst': obj_id})
+
+                # Current (v6) shape: one LocalGroups entry per BUILTIN group,
+                # identified by the RID its SID ends in.
+                rdp_allowed, ura_collected = set(), False
+                for right in (obj.get('UserRights') or []):
+                    if right.get('Privilege') != RDP_PRIVILEGE:
+                        continue
+                    # Only treat URA as authoritative when collection succeeded;
+                    # a failed collection must not silently drop real access.
+                    if not right.get('Collected', True):
+                        continue
+                    ura_collected = True
+                    for item in (right.get('Results') or []):
+                        if item.get('ObjectIdentifier'):
+                            rdp_allowed.add(item['ObjectIdentifier'])
+
+                for group in (obj.get('LocalGroups') or []):
+                    gid = group.get('ObjectIdentifier', '') or ''
+                    rel = next((r for suffix, r in LOCAL_GROUP_RID_EDGES.items()
+                                if gid.endswith(suffix)), None)
+                    if not rel:
+                        continue
+                    for item in (group.get('Results') or []):
+                        i_id = item.get('ObjectIdentifier', '')
+                        if not i_id:
+                            continue
+                        # Mirror BloodHound's URA enforcement: membership of
+                        # Remote Desktop Users confers nothing if the logon right
+                        # was withdrawn on this host.
+                        if rel == 'CanRDP' and ura_collected and i_id not in rdp_allowed:
+                            continue
+                        local_rels[rel].append({'src': i_id, 'dst': obj_id})
 
                 for d in (obj.get('AllowedToDelegate') or []):
                     d_id = d.get('ObjectIdentifier', d) if isinstance(d, dict) else d

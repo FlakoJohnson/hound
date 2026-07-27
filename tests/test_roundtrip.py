@@ -123,6 +123,27 @@ def _fixture_zip():
             'PrimaryGroupSID': grp,
             'Aces': [{'PrincipalSID': user, 'PrincipalType': 'User',
                       'RightName': 'WriteDacl', 'IsInherited': True}],
+            # v6 shape: BUILTIN groups keyed by RID, no legacy per-field arrays.
+            # alice is in both Administrators and Remote Desktop Users; halfsync
+            # is only in RDU and is absent from the URA list, so it must not get
+            # a CanRDP edge.
+            'LocalGroups': [
+                {'ObjectIdentifier': f'{comp}-544', 'Name': 'ADMINISTRATORS',
+                 'Collected': True, 'FailureReason': None, 'LocalNames': [],
+                 'Results': [{'ObjectIdentifier': user, 'ObjectType': 'User'}]},
+                {'ObjectIdentifier': f'{comp}-555', 'Name': 'REMOTE DESKTOP USERS',
+                 'Collected': True, 'FailureReason': None, 'LocalNames': [],
+                 'Results': [{'ObjectIdentifier': user, 'ObjectType': 'User'},
+                             {'ObjectIdentifier': halfsync, 'ObjectType': 'User'}]},
+                {'ObjectIdentifier': f'{comp}-580', 'Name': 'REMOTE MANAGEMENT USERS',
+                 'Collected': True, 'FailureReason': None, 'LocalNames': [],
+                 'Results': [{'ObjectIdentifier': user, 'ObjectType': 'User'}]},
+            ],
+            'UserRights': [
+                {'Privilege': 'SeRemoteInteractiveLogonRight', 'Collected': True,
+                 'FailureReason': None, 'LocalNames': [],
+                 'Results': [{'ObjectIdentifier': user, 'ObjectType': 'User'}]},
+            ],
         }],
         'groups.json': [
             {
@@ -210,6 +231,30 @@ def test_bloodhound_dcsync_query_works_verbatim(imported):
     assert sorted(rows) == sorted([f'SYNCER@{TEST_DOMAIN}', f'ALICE@{TEST_DOMAIN}'])
 
 
+def test_local_groups_map_to_lateral_edges_by_rid(imported):
+    """v6 data has no LocalAdmins/RemoteDesktopUsers arrays — only LocalGroups
+    keyed by RID. Reading just the legacy fields yielded zero lateral edges."""
+    with imported.session() as s:
+        rows = {r['rel']: r['c'] for r in s.run(
+            'MATCH ()-[r:AdminTo|CanRDP|CanPSRemote|ExecuteDCOM]->(c:Computer) '
+            'WHERE c.domain = $d RETURN type(r) AS rel, count(r) AS c',
+            d=TEST_DOMAIN)}
+    assert rows.get('AdminTo') == 1, 'from the -544 group'
+    assert rows.get('CanPSRemote') == 1, 'from the -580 group'
+    assert rows.get('ExecuteDCOM') is None, 'no -562 group in the fixture'
+
+
+def test_canrdp_respects_user_rights_assignment(imported):
+    """Remote Desktop Users membership alone must not grant CanRDP when the
+    logon right has been withdrawn — BloodHound enforces the same."""
+    with imported.session() as s:
+        holders = sorted(r['n'] for r in s.run(
+            'MATCH (n)-[:CanRDP]->(c:Computer) WHERE c.domain = $d '
+            'RETURN n.name AS n', d=TEST_DOMAIN))
+    assert holders == [f'ALICE@{TEST_DOMAIN}'], \
+        'halfsync is in RDU but absent from SeRemoteInteractiveLogonRight'
+
+
 def test_synthesized_edges_are_not_exported_as_aces(imported):
     """A derived DCSync edge must not become a fabricated ACE in an export."""
     blob, _ = BloodHoundExporter(imported).export_zip(domain=TEST_DOMAIN)
@@ -265,6 +310,22 @@ def test_export_omits_operator_notes(imported):
         with imported.session() as s:
             s.run('MATCH (n) WHERE n.objectid = $o REMOVE n.hound_notes',
                   o=f'{TEST_SID}-1001')
+
+
+def test_local_groups_survive_a_round_trip(imported):
+    """Exported LocalGroups must be RID-keyed, or re-import drops the edges."""
+    blob, _ = BloodHoundExporter(imported).export_zip(domain=TEST_DOMAIN)
+    z = zipfile.ZipFile(io.BytesIO(blob))
+    comp = json.loads(z.read('computers.json'))['data'][0]
+    ids = {g['ObjectIdentifier'].rsplit('-', 1)[-1] for g in comp['LocalGroups']}
+    assert {'544', '555', '580'} <= ids, f'expected RID-keyed groups, got {ids}'
+
+    BloodHoundImporter(imported).import_zip(io.BytesIO(blob))
+    with imported.session() as s:
+        n = s.run('MATCH ()-[r:AdminTo|CanRDP|CanPSRemote]->(c:Computer) '
+                  'WHERE c.domain = $d RETURN count(r) AS c',
+                  d=TEST_DOMAIN).single()['c']
+    assert n == 3, 'AdminTo + CanRDP + CanPSRemote preserved, none duplicated'
 
 
 def test_roundtrip_is_idempotent(imported):

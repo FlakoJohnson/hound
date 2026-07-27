@@ -329,20 +329,28 @@ class BloodHoundExporter:
             # Emit both the modern LocalGroups shape that BloodHound CE reads and
             # the legacy per-field lists that Hound's importer reads, so the
             # archive round-trips through either ingest path.
+            # LocalGroups entries must be keyed by the BUILTIN RID, not the group
+            # name — that is what BloodHound and the importer match on. The
+            # legacy per-field arrays are emitted alongside for older consumers.
             local = []
-            for field, rid in [('LocalAdmins', 'Administrators'),
-                               ('RemoteDesktopUsers', 'Remote Desktop Users'),
-                               ('PSRemoteUsers', 'Remote Management Users'),
-                               ('DcomUsers', 'Distributed COM Users')]:
+            for field, rid, label in [
+                ('LocalAdmins', '-544', 'ADMINISTRATORS'),
+                ('RemoteDesktopUsers', '-555', 'REMOTE DESKTOP USERS'),
+                ('PSRemoteUsers', '-580', 'REMOTE MANAGEMENT USERS'),
+                ('DcomUsers', '-562', 'DISTRIBUTED COM USERS'),
+            ]:
                 results = edges[field].get(oid, [])
                 obj[field] = {'Collected': bool(results), 'FailureReason': None,
                               'Results': results}
                 if results:
-                    local.append({'ObjectIdentifier': f'{oid}-{rid}',
-                                  'Name': f'{rid.upper()}@{props.get("domain", "")}',
+                    local.append({'ObjectIdentifier': f'{oid}{rid}',
+                                  'Name': f'{label}@{props.get("domain", "")}',
                                   'Collected': True, 'FailureReason': None,
                                   'Results': results, 'LocalNames': []})
             obj['LocalGroups'] = local
+            # Deliberately empty: the graph holds only the CanRDP edges that
+            # survived User Rights Assignment filtering at import, so re-emitting
+            # a URA list would re-filter already-filtered data.
             obj['UserRights'] = []
             obj['DCRegistryData'] = {}
             obj['Status'] = None
