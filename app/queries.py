@@ -336,11 +336,37 @@ ORDER BY CertAuthority, Principal"""
         {
             "id": "enroll_rights",
             "name": "Certificate Enrollment Rights",
-            "description": "Who has Enroll permissions on certificate templates",
-            "cypher": """MATCH p=(n)-[:Enroll]->(t:CertTemplate)
-RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
-       t.name AS Template, t.domain AS Domain
-ORDER BY Domain, Template"""
+            "description": "Non-privileged enrollment rights — Domain Users / Computers, Authenticated Users, and non-admin principals",
+            # Domain Admins and Enterprise Admins can enroll in everything by
+            # design and accounted for ~two thirds of the unfiltered output,
+            # burying the rows that matter. What makes an enrollment right
+            # interesting is the enroller being low-privileged: a template
+            # enrollable by Domain Users is reachable by any compromised account,
+            # which is the precondition for every ESC path.
+            #
+            # Exposure flags the well-known broad principals (Domain Users,
+            # Domain Computers, Authenticated Users, Everyone) so they sort to
+            # the top — those are effectively "anyone in the domain".
+            "cypher": """MATCH (n)-[:Enroll]->(t:CertTemplate)
+WHERE coalesce(n.highvalue, false) = false
+  AND coalesce(n.admincount, false) = false
+  AND coalesce(n.isdc, false) = false
+  AND NOT n.objectid ENDS WITH '-512'
+  AND NOT n.objectid ENDS WITH '-518'
+  AND NOT n.objectid ENDS WITH '-519'
+  AND NOT n.objectid ENDS WITH '-544'
+  AND NOT n.objectid ENDS WITH '-516'
+  AND NOT n.objectid ENDS WITH '-498'
+  AND NOT n.objectid ENDS WITH 'S-1-5-9'
+RETURN coalesce(n.name, n.objectid) AS Principal,
+       [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+       CASE WHEN n.objectid ENDS WITH '-513' OR n.objectid ENDS WITH '-515'
+                 OR n.objectid ENDS WITH 'S-1-5-11' OR n.objectid ENDS WITH 'S-1-1-0'
+            THEN 'BROAD' ELSE 'scoped' END AS Exposure,
+       t.domain AS Domain,
+       count(DISTINCT t) AS Templates,
+       collect(DISTINCT t.name)[0..6] AS SampleTemplates
+ORDER BY Exposure, Templates DESC, Principal"""
         },
         {
             "id": "pki_write",
