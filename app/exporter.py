@@ -220,6 +220,8 @@ class BloodHoundExporter:
             ('AllowedToDelegate', 'AllowedToDelegate', False),
             ('AllowedToAct', 'AllowedToAct', True),
             ('HasSIDHistory', 'HasSIDHistory', False),
+            # Computer -> sMSA it hosts; field lives on the host (edge points away).
+            ('DumpSMSAPassword', 'DumpSMSAPassword', False),
             ('AdminTo', 'LocalAdmins', True),
             ('CanRDP', 'RemoteDesktopUsers', True),
             ('CanPSRemote', 'PSRemoteUsers', True),
@@ -321,6 +323,7 @@ class BloodHoundExporter:
 
         if label == 'Computer':
             obj['AllowedToAct'] = edges['AllowedToAct'].get(oid, [])
+            obj['DumpSMSAPassword'] = edges['DumpSMSAPassword'].get(oid, [])
             obj['Sessions'] = {'Collected': bool(edges['sessions'].get(oid)),
                                'FailureReason': None,
                                'Results': edges['sessions'].get(oid, [])}
