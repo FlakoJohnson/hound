@@ -300,6 +300,34 @@ RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
+        {
+            "id": "gmsa_readers",
+            "name": "gMSA Password Readers",
+            "description": "Who can retrieve a gMSA's managed password (msDS-GroupMSAMembership) — recover the plaintext with the account's group membership",
+            "cypher": """MATCH (n)-[:ReadGMSAPassword]->(m)
+RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+       m.name AS gMSA, m.domain AS Domain
+ORDER BY Domain, gMSA, Principal"""
+        },
+        {
+            "id": "gmsa_readable_broad",
+            "name": "gMSA Readable by a Broad Group",
+            "description": "gMSAs any authenticated foothold can read — reader is Domain Users, Authenticated Users, Everyone, or a BUILTIN catch-all. Immediate credential disclosure.",
+            "cypher": """MATCH (n)-[:ReadGMSAPassword]->(m)
+WHERE n.name =~ '(?i)(domain users|authenticated users|everyone|users|pre-windows 2000 compatible access)@.*'
+   OR n.objectid IN ['S-1-1-0','S-1-5-11','S-1-5-7']
+   OR n.objectid ENDS WITH '-513'
+RETURN n.name AS Reader, m.name AS gMSA, m.domain AS Domain
+ORDER BY Domain, gMSA"""
+        },
+        {
+            "id": "smsa_dumpers",
+            "name": "SMSA Password Dumpers",
+            "description": "Hosts with a standalone MSA installed — SYSTEM on the host can extract the account's password from LSA secrets",
+            "cypher": """MATCH (c:Computer)-[:DumpSMSAPassword]->(m)
+RETURN c.name AS Host, m.name AS SMSA, m.domain AS Domain
+ORDER BY Domain, Host"""
+        },
     ],
 
     "ADCS / Cert Abuse": [
