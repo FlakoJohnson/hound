@@ -55,7 +55,7 @@ ALLOWED_REL_TYPES = {
     # ACE rights
     'GenericAll', 'GenericWrite', 'WriteOwner', 'WriteDacl', 'AllExtendedRights',
     'Owns', 'ForceChangePassword', 'AddMember', 'AddSelf',
-    'ReadLAPSPassword', 'ReadGMSAPassword',
+    'ReadLAPSPassword', 'ReadGMSAPassword', 'DumpSMSAPassword',
     'DCSync', 'GetChanges', 'GetChangesAll', 'GetChangesInFilteredSet',
     'WriteAccountRestrictions', 'AddKeyCredentialLink', 'WriteSPN',
     # ADCS
@@ -492,6 +492,7 @@ class BloodHoundImporter:
             child_rels     = []
             gpo_link_rels  = []
             sid_hist_rels  = []
+            dumpsmsa_rels  = []
             adcs_rels  = defaultdict(list)
 
             for obj in batch:
@@ -574,6 +575,13 @@ class BloodHoundImporter:
                     if d_id:
                         delegate_rels.append({'src': obj_id, 'dst': d_id})
 
+                # A host with an SMSA installed can dump its password from LSA:
+                # Computer -> SMSA, same typed-ID shape as AllowedToDelegate.
+                for s_smsa in (obj.get('DumpSMSAPassword') or []):
+                    s_id = s_smsa.get('ObjectIdentifier', s_smsa) if isinstance(s_smsa, dict) else s_smsa
+                    if s_id:
+                        dumpsmsa_rels.append({'src': obj_id, 'dst': s_id})
+
                 for a in (obj.get('AllowedToAct') or []):
                     a_id = a.get('ObjectIdentifier', a) if isinstance(a, dict) else a
                     if a_id:
@@ -654,6 +662,7 @@ class BloodHoundImporter:
                 (child_rels,    'Contains'),
                 (gpo_link_rels, 'GpLink'),
                 (sid_hist_rels, 'HasSIDHistory'),
+                (dumpsmsa_rels, 'DumpSMSAPassword'),
             ]:
                 if rels:
                     try:
