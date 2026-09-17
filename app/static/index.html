@@ -2859,6 +2859,10 @@ function renderContainerTree(rows, scrollId, toolbarId, countId) {
         const lazyInfo = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
         return `<li data-search="${search}" data-type="Group"><details class="tree-branch tree-lazy-group" data-gid="${escAttr(node.id)}" ontoggle="lazyLoadGroupMembers(this)"><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${badge}${enabledMark}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click to load members / Right-click for details">${escHtml(shortName(node.name))}</span><span class="tree-count">⋯</span>${lazyInfo}</div></summary><ul class="tree-lazy-body"><li><span class="tree-empty">click to load members…</span></li></ul></details></li>`;
       }
+      if (node.type === 'GPO') {
+        const lazyInfo = `<span class="tree-info" onclick="event.preventDefault();event.stopPropagation();showObjectDetails('containerTree',${idx})" title="Details">ⓘ</span>`;
+        return `<li data-search="${search}" data-type="GPO"><details class="tree-branch tree-lazy-gpo" data-gid="${escAttr(node.id)}" ontoggle="lazyLoadGPOLinks(this)"><summary><div class="tree-row tree-branch-row"><span class="tree-marker tree-marker-branch"></span>${badge}<span class="tree-name tree-branch-name" oncontextmenu="showCtxMenu(event,'containerTree',${idx})" title="Click to load linked targets / Right-click for details">${escHtml(shortName(node.name))}</span><span class="tree-count">⋯</span>${lazyInfo}</div></summary><ul class="tree-lazy-body"><li><span class="tree-empty">click to load linked targets…</span></li></ul></details></li>`;
+      }
       // Container-type leaves (OU/Container with no children) get an "(empty)"
       // marker so the tree doesn't mislead the eye into thinking they're nested
       // under the row above.
@@ -2971,6 +2975,47 @@ async function lazyLoadGroupMembers(el) {
     }
     ul.innerHTML = h;
     updateMemberPillCounts();
+  } catch(e) {
+    ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(e.message)}</span></li>`;
+    el.dataset.loaded = '';
+  }
+}
+
+async function lazyLoadGPOLinks(el) {
+  if (!el.open || el.dataset.loaded) return;
+  el.dataset.loaded = '1';
+  const gid = el.dataset.gid;
+  const ul = el.querySelector(':scope > .tree-lazy-body');
+  if (!ul) return;
+  ul.innerHTML = '<li><span class="tree-empty">loading linked targets…</span></li>';
+  const linkColor = 'var(--yellow)';
+  const shortName = (n) => !n ? '(unnamed)' : (n.includes('@') ? n.split('@')[0] : n);
+  try {
+    const r = await apiFetch('/api/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        cypher: "MATCH (g:Base {objectid:$gid})-[:GpLink]->(t) RETURN coalesce(t.objectid,t.name) AS id, t.name AS name, [lbl IN labels(t) WHERE lbl<>'Base'][0] AS type, t.distinguishedname AS dn, g.gpcpath AS gpcpath ORDER BY type, name",
+        params: {gid}
+      })
+    });
+    const d = await r.json();
+    if (!d.success) { ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(d.error||'load failed')}</span></li>`; el.dataset.loaded=''; return; }
+    const targets = d.data || [];
+    const cntEl = el.querySelector(':scope > summary .tree-count');
+    if (cntEl) cntEl.textContent = targets.length;
+    if (!targets.length) { ul.innerHTML = '<li><span class="tree-empty">(no linked targets)</span></li>'; return; }
+    const reg = window._tableRows['containerTree'] || (window._tableRows['containerTree'] = []);
+    let h = '';
+    for (const t of targets) {
+      const ti = reg.length;
+      reg.push({Name: t.name, Type: t.type, objectid: t.id, DistinguishedName: t.dn});
+      const sn = escHtml(shortName(t.name));
+      const typeColor = {OU: 'var(--yellow)', Domain: '#a3e635', Container: 'var(--text2)'};
+      const badge = `<span class="tree-badge" style="background:${typeColor[t.type] || linkColor}">GpLink(${escHtml(t.type||'?')})</span>`;
+      const search = escAttr([t.name, t.dn, t.id].filter(Boolean).join(' ').toLowerCase());
+      h += `<li data-search="${search}" data-type="GPO"><div class="tree-row tree-leaf"><span class="tree-marker tree-marker-leaf">→</span>${badge}<span class="tree-name" onclick="event.stopPropagation();showObjectDetails('containerTree',${ti})" oncontextmenu="showCtxMenu(event,'containerTree',${ti})" title="Click for details">${sn}</span></div></li>`;
+    }
+    ul.innerHTML = h;
   } catch(e) {
     ul.innerHTML = `<li><span class="log-err">✗ ${escHtml(e.message)}</span></li>`;
     el.dataset.loaded = '';
