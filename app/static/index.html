@@ -3218,24 +3218,11 @@ async function showObjectDetails(tableId, rowIndex) {
             body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf]->(g:Group) WHERE ${groupWhere} RETURN m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
           });
           const dd = await directRes.json();
-          members = { direct: dd.success ? dd.data : [], unrolled: [] };
-
-          // Unrolled (transitive) members — can be very slow on large
-          // groups (MemberOf*1.. traversal).  Race against a 8s timeout
-          // so the panel renders promptly; if it finishes in time, merge
-          // the results in.
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 8000);
-            const unrolledRes = await apiFetch('/api/run', {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              signal: controller.signal,
-              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
-            });
-            clearTimeout(timer);
-            const ud = await unrolledRes.json();
-            if (ud.success) members.unrolled = ud.data;
-          } catch(_) { /* timeout or abort — show direct members only */ }
+          // Unrolled (transitive) members use MemberOf*1.. — a variable-
+          // length path traversal that can take minutes on large groups
+          // (3m25s measured on ACCOUNT OPERATORS, 37k-node graph). Don't
+          // auto-load; provide a "Load" button the user can click on demand.
+          members = { direct: dd.success ? dd.data : [], unrolled: [], unrolledWhere: groupWhere };
         }
       }
     }
@@ -3305,16 +3292,23 @@ function renderObjectDetails(fullProps, rowData, groups = [], members = null) {
       </div>`;
     }).join('') || '<div style="color:var(--text3);padding:8px 0">None.</div>';
 
+    // Stash the unrolled query WHERE clause so the on-demand button can fire it.
+    const unrolledWhere = members.unrolledWhere || '';
+    const unrolledLoaded = members.unrolled.length > 0;
+    const unrolledLabel = unrolledLoaded
+      ? `Unrolled (${members.unrolled.length})`
+      : '▶ Load Transitive';
+
     html += `<div class="details-section">
       <h4 style="display:flex;justify-content:space-between;align-items:center">
         <span>Group Members</span>
         <span style="font-size:11px;font-weight:normal">
           <span id="memberViewDirect" onclick="toggleMemberView('direct')" style="cursor:pointer;color:var(--green);margin-right:10px">Direct (${members.direct.length})</span>
-          <span id="memberViewUnrolled" onclick="toggleMemberView('unrolled')" style="cursor:pointer;color:var(--text3)">Unrolled (${members.unrolled.length})</span>
+          <span id="memberViewUnrolled" onclick="${unrolledLoaded ? "toggleMemberView('unrolled')" : `loadUnrolledMembers(this,'${escForOnclick(unrolledWhere)}')`}" style="cursor:pointer;color:var(--text3)">${unrolledLabel}</span>
         </span>
       </h4>
       <div id="memberListDirect">${renderMemberRows(members.direct)}</div>
-      <div id="memberListUnrolled" style="display:none">${renderMemberRows(members.unrolled)}</div>
+      <div id="memberListUnrolled" style="display:none">${unrolledLoaded ? renderMemberRows(members.unrolled) : ''}</div>
     </div>`;
   }
 
@@ -3378,6 +3372,36 @@ async function saveNote(btn) {
     toast('Failed to save note', 'err');
     btn.textContent = orig;
     btn.disabled = false;
+  }
+}
+
+async function loadUnrolledMembers(btn, groupWhere) {
+  btn.textContent = '⏳ Loading…';
+  btn.style.color = 'var(--yellow)';
+  const ul = document.getElementById('memberListUnrolled');
+  try {
+    const r = await apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+    });
+    const d = await r.json();
+    const members = d.success ? d.data : [];
+    btn.textContent = `Unrolled (${members.length})`;
+    btn.setAttribute('onclick', "toggleMemberView('unrolled')");
+    if (members.length) {
+      ul.innerHTML = members.map(m => {
+        const sn = m.name ? m.name.split('@')[0] : m.name;
+        const dom = m.name && m.name.includes('@') ? m.name.split('@')[1] : '';
+        const cb = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(m.name)}',this);event.stopPropagation();">${getCopyIcon()}</span>`;
+        return `<div class="details-property"><div class="details-value"><span style="color:var(--text3);font-size:11px;margin-right:6px">[${escHtml(m.type||'?')}]</span>${escHtml(sn)}<span style="color:var(--text3);font-size:11px">@${escHtml(dom)}</span>${cb}</div></div>`;
+      }).join('');
+    } else {
+      ul.innerHTML = '<div style="color:var(--text3);padding:8px 0">None.</div>';
+    }
+    toggleMemberView('unrolled');
+  } catch(e) {
+    btn.textContent = '✗ Failed';
+    btn.style.color = 'var(--red)';
+    toast('Transitive members query failed — try a smaller group', 'err');
   }
 }
 
