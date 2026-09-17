@@ -3213,17 +3213,29 @@ async function showObjectDetails(tableId, rowIndex) {
           ? `g.objectid = '${groupSid}'`
           : (lookupName ? `g.name = '${lookupName.replace(/'/g,"\\'")}'` : null);
         if (groupWhere) {
-          const [directRes, unrolledRes] = await Promise.all([
-            apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf]->(g:Group) WHERE ${groupWhere} RETURN m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
-            }),
-            apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
-            })
-          ]);
+          // Direct members — fast, always wait for it.
+          const directRes = await apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf]->(g:Group) WHERE ${groupWhere} RETURN m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+          });
           const dd = await directRes.json();
-          const ud = await unrolledRes.json();
-          members = { direct: dd.success ? dd.data : [], unrolled: ud.success ? ud.data : [] };
+          members = { direct: dd.success ? dd.data : [], unrolled: [] };
+
+          // Unrolled (transitive) members — can be very slow on large
+          // groups (MemberOf*1.. traversal).  Race against a 8s timeout
+          // so the panel renders promptly; if it finishes in time, merge
+          // the results in.
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            const unrolledRes = await apiFetch('/api/run', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              signal: controller.signal,
+              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+            });
+            clearTimeout(timer);
+            const ud = await unrolledRes.json();
+            if (ud.success) members.unrolled = ud.data;
+          } catch(_) { /* timeout or abort — show direct members only */ }
         }
       }
     }
