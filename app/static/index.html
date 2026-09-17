@@ -1793,7 +1793,7 @@ function syncVirtualRows(scrollId) {
     if (!row) continue;
     const evenClass = vi % 2 === 1 ? ' vrow-even' : '';
     html += `<tr class="${evenClass}" data-ridx="${di}" onclick="showObjectDetails('${scrollId}',${di})" oncontextmenu="showCtxMenu(event,'${scrollId}',${di})" style="cursor:pointer;height:${_V_ROW_H}px" title="Click for details / Right-click for actions">`;
-    keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
+    keys.forEach(k => { html += `<td>${renderCell(k, row[k], row)}</td>`; });
     html += '</tr>';
   }
 
@@ -1822,7 +1822,7 @@ function syncVirtualRows(scrollId) {
 function renderTableRow(scrollId, row, index, keys) {
   // Still used by the container tree (non-virtual path)
   let html = `<tr data-ridx="${index}" onclick="showObjectDetails('${scrollId}',${index})" oncontextmenu="showCtxMenu(event,'${scrollId}',${index})" style="cursor:pointer;" title="Click for details / Right-click for actions">`;
-  keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
+  keys.forEach(k => { html += `<td>${renderCell(k, row[k], row)}</td>`; });
   return html + '</tr>';
 }
 
@@ -1868,8 +1868,18 @@ function sortTable(scrollId, col) {
   rebuildFilteredIndices(scrollId);
 }
 
-function renderCell(key, val) {
-  if (val === null || val === undefined) return '<span style="color:var(--text3)">null</span>';
+function renderCell(key, val, row) {
+  if (val === null || val === undefined) {
+    // For name/principal columns, show the objectid (SID) instead of bare "null"
+    // so orphaned Base nodes from incomplete SharpHound collection are identifiable.
+    const k = key.toLowerCase();
+    const nameish = ['name','principal','user','computer','group','gpo','gmsa','smsa','host',
+                     'reader','controller','source','target','hvt','ownednode','delegateprincipal'].includes(k);
+    if (nameish && row?.objectid) {
+      return `<span style="color:var(--yellow)" title="Unresolved — object not collected">${escHtml(row.objectid)}</span>`;
+    }
+    return '<span style="color:var(--text3)">null</span>';
+  }
   if (Array.isArray(val)) return `<span style="color:var(--text2)">[${val.length > 3 ? val.slice(0,3).join(', ')+'…' : val.join(', ')}]</span>`;
 
   const k = key.toLowerCase();
