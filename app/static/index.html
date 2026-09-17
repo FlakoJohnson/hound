@@ -1627,38 +1627,39 @@ function escForOnclick(str) {
 }
 
 function copyToClipboard(text, buttonElement) {
-  // Use fallback method for better compatibility
-  const textArea = document.createElement('textarea');
-  textArea.value = text;
-  textArea.style.position = 'fixed';
-  textArea.style.top = '0';
-  textArea.style.left = '0';
-  textArea.style.width = '2em';
-  textArea.style.height = '2em';
-  textArea.style.padding = '0';
-  textArea.style.border = 'none';
-  textArea.style.outline = 'none';
-  textArea.style.boxShadow = 'none';
-  textArea.style.background = 'transparent';
-  document.body.appendChild(textArea);
-  textArea.select();
-
-  try {
-    const successful = document.execCommand('copy');
-    if (successful && buttonElement) {
-      // Flash effect
-      const original = buttonElement.innerHTML;
-      buttonElement.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>';
-      buttonElement.style.background = 'rgba(163,230,53,0.4)';
-      setTimeout(() => {
-        buttonElement.innerHTML = original;
-        buttonElement.style.background = 'rgba(100,255,218,0.15)';
-      }, 1000);
-    }
-  } catch (err) {
-    console.error('Copy failed:', err);
+  function flashButton() {
+    if (!buttonElement) return;
+    const original = buttonElement.innerHTML;
+    buttonElement.innerHTML = '<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>';
+    buttonElement.style.background = 'rgba(163,230,53,0.4)';
+    setTimeout(() => {
+      buttonElement.innerHTML = original;
+      buttonElement.style.background = 'rgba(100,255,218,0.15)';
+    }, 1000);
   }
 
+  // Modern Clipboard API (required for HTTPS / secure contexts)
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(flashButton).catch(err => {
+      console.error('Clipboard API failed, trying fallback:', err);
+      execCommandFallback(text);
+      flashButton();
+    });
+    return;
+  }
+
+  // Fallback for HTTP / older browsers
+  execCommandFallback(text);
+  flashButton();
+}
+
+function execCommandFallback(text) {
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:none;outline:none;box-shadow:none;background:transparent';
+  document.body.appendChild(textArea);
+  textArea.select();
+  try { document.execCommand('copy'); } catch (e) { /* silent */ }
   document.body.removeChild(textArea);
 }
 
