@@ -1297,6 +1297,8 @@
         <div class="search-box-wrap"><input class="search-box" id="customFilter" placeholder="filter results..." oninput="filterCustomTable(this.value)"><button class="search-box-clear" onclick="clearSearchBox('customFilter',filterCustomTable)">×</button></div>
         <div class="spacer"></div>
         <button class="btn btn-cyan"  onclick="exportCustomCSV()">↓ CSV</button>
+        <button class="btn btn-green" onclick="copyTable()">⎘ COPY TABLE</button>
+        <button class="btn btn-cyan"  onclick="copyMarkdown()">⎘ MARKDOWN</button>
       </div>
       <div class="results-scroll" id="customScroll" style="flex:1">
         <div class="empty-state">
@@ -2255,8 +2257,13 @@ function cellText(val) {
   return Array.isArray(val) ? val.join(';') : String(val ?? '');
 }
 
+function activeScrollId() {
+  return document.getElementById('view-custom')?.classList.contains('visible')
+    ? 'customScroll' : 'resultsScroll';
+}
+
 function copyTable() {
-  const d = getVisibleRows('resultsScroll');
+  const d = getVisibleRows(activeScrollId());
   if (!d?.rows?.length) return toast('No data to copy', 'err');
   const lines = [d.keys.join('\t')];
   d.rows.forEach(row => lines.push(d.keys.map(k => cellText(row[k])).join('\t')));
@@ -2265,7 +2272,7 @@ function copyTable() {
 }
 
 function copyMarkdown() {
-  const d = getVisibleRows('resultsScroll');
+  const d = getVisibleRows(activeScrollId());
   if (!d?.rows?.length) return toast('No data to copy', 'err');
   const widths = d.keys.map(k => {
     const maxVal = Math.max(...d.rows.map(r => cellText(r[k]).length));
