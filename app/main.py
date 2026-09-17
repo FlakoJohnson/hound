@@ -422,23 +422,47 @@ def run_query():
             if f' {op} ' in padded or f' {op}\n' in padded:
                 return jsonify({'success': False, 'error': 'Read-only access: write operations not permitted'}), 403
 
-    try:
-        with get_driver().session() as neo4j_session:
+    def _coerce(v):
+        """Coerce a Neo4j value to a JSON-safe Python type."""
+        if hasattr(v, '__class__') and v.__class__.__name__ in ('Node', 'Relationship', 'Path'):
+            return str(v)
+        if isinstance(v, list):
+            return [str(i) if not isinstance(i, (str, int, float, bool, type(None))) else i for i in v]
+        return v
+
+    def _stream():
+        """Generator that streams JSON rows off the Neo4j cursor.
+
+        Yields the response incrementally so the server never holds the
+        full result set in memory.  The JSON shape is identical to the
+        original buffered response:
+          {"success":true,"keys":[...],"data":[{...},{...}],"count":N}
+        The browser's `.json()` still works — it buffers the stream
+        before parsing, but TTFB is lower and server memory stays flat.
+        """
+        neo4j_session = get_driver().session()
+        try:
             result = neo4j_session.run(cypher, parameters=params, timeout=60)
             keys = list(result.keys())
-            records = []
+            yield '{"success":true,"keys":' + json.dumps(keys) + ',"data":['
+            count = 0
             for record in result:
-                row = {}
-                for k in keys:
-                    v = record[k]
-                    if hasattr(v, '__class__') and v.__class__.__name__ in ('Node', 'Relationship', 'Path'):
-                        row[k] = str(v)
-                    elif isinstance(v, list):
-                        row[k] = [str(i) if not isinstance(i, (str, int, float, bool, type(None))) else i for i in v]
-                    else:
-                        row[k] = v
-                records.append(row)
-            return jsonify({'success': True, 'keys': keys, 'data': records, 'count': len(records)})
+                row = {k: _coerce(record[k]) for k in keys}
+                prefix = ',' if count else ''
+                yield prefix + json.dumps(row, default=str)
+                count += 1
+            yield '],"count":' + str(count) + '}'
+        except Exception as e:
+            # If we already started the data array, we can't change the
+            # HTTP status — emit a truncated response the frontend will
+            # fail to parse (better than silence).  If we haven't yielded
+            # anything yet, emit a clean error object.
+            yield json.dumps({'success': False, 'error': str(e)})
+        finally:
+            neo4j_session.close()
+
+    try:
+        return Response(_stream(), content_type='application/json')
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 200
 
