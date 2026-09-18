@@ -322,6 +322,20 @@
   }
   .query-description { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
 
+  #queryParams:empty { display: none; }
+  #queryParams { margin-bottom: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .param-row { display: flex; align-items: center; gap: 8px; }
+  .param-label {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--cyan); font-family: var(--font-disp); white-space: nowrap; min-width: 60px;
+  }
+  .param-input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); padding: 6px 10px; font-size: 13px; font-family: var(--font-mono);
+  }
+  .param-input:focus { border-color: var(--cyan); box-shadow: var(--glow-c); outline: none; }
+  .param-input::placeholder { color: var(--text3); }
+
   .cypher-container {
     position: relative;
     background: var(--bg);
@@ -1242,6 +1256,7 @@
     <div class="query-panel" id="queryPanel" style="display:none">
       <div class="query-title" id="qTitle">SELECT A QUERY</div>
       <div class="query-description" id="qDesc"></div>
+      <div id="queryParams"></div>
       <div class="cypher-container">
         <span class="cypher-label">CYPHER</span>
         <textarea class="cypher-input" id="cypherInput" rows="4" spellcheck="false"></textarea>
@@ -1527,7 +1542,6 @@ function renderNav(queries) {
 }
 
 function selectQuery(q, el) {
-  // Deselect previous
   document.querySelectorAll('.query-item.active').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
   currentQuery = q;
@@ -1538,8 +1552,16 @@ function selectQuery(q, el) {
   document.getElementById('queryPanel').style.display = '';
   document.getElementById('execTime').textContent = '';
 
+  const paramsDiv = document.getElementById('queryParams');
+  paramsDiv.innerHTML = '';
+  if (q.params?.length) {
+    for (const p of q.params) {
+      paramsDiv.innerHTML += `<div class="param-row"><span class="param-label">${escHtml(p.label)}</span><input class="param-input" data-param="${escAttr(p.key)}" placeholder="${escAttr(p.placeholder || '')}" onkeydown="if(event.key==='Enter')runQuery()"></div>`;
+    }
+  }
+
   showTab('results');
-  runQuery();
+  if (!q.params?.length) runQuery();
 }
 
 // ── Query Execution ────────────────────────────────────────────────────────
@@ -1558,7 +1580,11 @@ function applyDomainFilter(d) {
 async function runQuery() {
   const cypher = document.getElementById('cypherInput').value.trim();
   if (!cypher) return;
-  // Clear stale filter from a previous Open-in-Visualizer or other action.
+  const params = {};
+  document.querySelectorAll('#queryParams .param-input').forEach(el => {
+    const v = el.value.trim();
+    if (v) params[el.dataset.param] = v;
+  });
   const _fb = document.getElementById('filterBox');
   if (_fb) _fb.value = '';
   setRunning(true);
@@ -1568,7 +1594,7 @@ async function runQuery() {
     const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({cypher})
+      body: JSON.stringify({cypher, params})
     });
     const d = await r.json();
     const ms = Math.round(performance.now() - t0);
