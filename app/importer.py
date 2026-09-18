@@ -447,6 +447,7 @@ class BloodHoundImporter:
                 obj_id = obj.get('ObjectIdentifier', props.get('objectid', ''))
                 if not obj_id:
                     continue
+                obj_id = obj_id.upper()
                 props = dict(props) if props else {}
                 props['objectid'] = obj_id
                 clean_props = {}
@@ -499,16 +500,17 @@ class BloodHoundImporter:
                 obj_id = obj.get('ObjectIdentifier', obj.get('Properties', {}).get('objectid', ''))
                 if not obj_id:
                     continue
+                obj_id = obj_id.upper()
 
                 for ace in (obj.get('Aces') or []):
-                    src_id = ace.get('PrincipalSID', '')
+                    src_id = (ace.get('PrincipalSID') or '').upper()
                     right  = ace.get('RightName', '')
                     if not src_id or not right or right not in ALLOWED_REL_TYPES:
                         continue
                     ace_rels[right].append({'src': src_id, 'dst': obj_id, 'inh': ace.get('IsInherited', False)})
 
                 for m in (obj.get('Members') or []):
-                    m_id = m.get('ObjectIdentifier', '')
+                    m_id = (m.get('ObjectIdentifier') or '').upper()
                     if m_id:
                         member_rels.append({'src': m_id, 'dst': obj_id})
 
@@ -517,14 +519,14 @@ class BloodHoundImporter:
                 # primary-group membership — Domain Users / Domain Computers — so
                 # MemberOf traversals under-reported on every import. Accept either
                 # casing so the inverse typo from another collector can't recur.
-                pg = obj.get('PrimaryGroupSID') or obj.get('PrimaryGroupSid') or ''
+                pg = (obj.get('PrimaryGroupSID') or obj.get('PrimaryGroupSid') or '').upper()
                 if pg:
                     primary_rels.append({'src': obj_id, 'dst': pg})
 
                 sess_data = obj.get('Sessions', {})
                 sess_list = sess_data.get('Results', []) if isinstance(sess_data, dict) else (sess_data or [])
                 for s in sess_list:
-                    u_id = s.get('UserSID', '')
+                    u_id = (s.get('UserSID') or '').upper()
                     if u_id:
                         session_rels.append({'src': u_id, 'dst': obj_id})
 
@@ -534,7 +536,7 @@ class BloodHoundImporter:
                     col = obj.get(field, {})
                     col_list = col.get('Results', []) if isinstance(col, dict) else (col or [])
                     for item in col_list:
-                        i_id = item.get('ObjectIdentifier', '')
+                        i_id = (item.get('ObjectIdentifier') or '').upper()
                         if i_id:
                             local_rels[rel].append({'src': i_id, 'dst': obj_id})
 
@@ -551,7 +553,7 @@ class BloodHoundImporter:
                     ura_collected = True
                     for item in (right.get('Results') or []):
                         if item.get('ObjectIdentifier'):
-                            rdp_allowed.add(item['ObjectIdentifier'])
+                            rdp_allowed.add(item['ObjectIdentifier'].upper())
 
                 for group in (obj.get('LocalGroups') or []):
                     gid = group.get('ObjectIdentifier', '') or ''
@@ -560,7 +562,7 @@ class BloodHoundImporter:
                     if not rel:
                         continue
                     for item in (group.get('Results') or []):
-                        i_id = item.get('ObjectIdentifier', '')
+                        i_id = (item.get('ObjectIdentifier') or '').upper()
                         if not i_id:
                             continue
                         # Mirror BloodHound's URA enforcement: membership of
@@ -572,6 +574,8 @@ class BloodHoundImporter:
 
                 for d in (obj.get('AllowedToDelegate') or []):
                     d_id = d.get('ObjectIdentifier', d) if isinstance(d, dict) else d
+                    if isinstance(d_id, str):
+                        d_id = d_id.upper()
                     if d_id:
                         delegate_rels.append({'src': obj_id, 'dst': d_id})
 
@@ -579,11 +583,15 @@ class BloodHoundImporter:
                 # Computer -> SMSA, same typed-ID shape as AllowedToDelegate.
                 for s_smsa in (obj.get('DumpSMSAPassword') or []):
                     s_id = s_smsa.get('ObjectIdentifier', s_smsa) if isinstance(s_smsa, dict) else s_smsa
+                    if isinstance(s_id, str):
+                        s_id = s_id.upper()
                     if s_id:
                         dumpsmsa_rels.append({'src': obj_id, 'dst': s_id})
 
                 for a in (obj.get('AllowedToAct') or []):
                     a_id = a.get('ObjectIdentifier', a) if isinstance(a, dict) else a
+                    if isinstance(a_id, str):
+                        a_id = a_id.upper()
                     if a_id:
                         act_rels.append({'src': a_id, 'dst': obj_id})
 
@@ -591,6 +599,8 @@ class BloodHoundImporter:
                     t_sid = t.get('TargetDomainSid', t.get('TargetDomainName', ''))
                     if not t_sid:
                         continue
+                    if isinstance(t_sid, str):
+                        t_sid = t_sid.upper()
                     # Orient the edge by TrustDirection. BloodHound's TrustedBy:
                     # (A)-[:TrustedBy]->(B) means B trusts A, so principals in A
                     # can access B (attack flows A→B). From the collected domain D
@@ -613,17 +623,19 @@ class BloodHoundImporter:
                         trust_targets.append({'sid': t_sid, 'name': t_name.upper()})
 
                 for c in (obj.get('ChildObjects') or []):
-                    c_id = c.get('ObjectIdentifier', '')
+                    c_id = (c.get('ObjectIdentifier') or '').upper()
                     if c_id:
                         child_rels.append({'src': obj_id, 'dst': c_id})
 
                 for lnk in (obj.get('Links') or []):
-                    gpo_id = lnk.get('GUID', lnk.get('ObjectIdentifier', ''))
+                    gpo_id = (lnk.get('GUID') or lnk.get('ObjectIdentifier') or '').upper()
                     if gpo_id:
                         gpo_link_rels.append({'src': gpo_id, 'dst': obj_id})
 
                 for h in (obj.get('HasSIDHistory') or []):
                     h_id = h.get('ObjectIdentifier', h) if isinstance(h, dict) else h
+                    if isinstance(h_id, str):
+                        h_id = h_id.upper()
                     if h_id:
                         sid_hist_rels.append({'src': obj_id, 'dst': h_id})
 
@@ -632,6 +644,8 @@ class BloodHoundImporter:
                                     ('HostsCAService', 'HostsCAService')]:
                     for target in (obj.get(field) or []):
                         t_id = target.get('ObjectIdentifier', target) if isinstance(target, dict) else target
+                        if isinstance(t_id, str):
+                            t_id = t_id.upper()
                         if t_id:
                             adcs_rels[rel].append({'src': obj_id, 'dst': t_id})
 
