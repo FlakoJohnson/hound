@@ -474,6 +474,8 @@
   tbody tr:hover { background: rgba(100,255,218,.03); }
   tbody tr:nth-child(even) { background: rgba(10,14,26,.6); }
   tbody tr:nth-child(even):hover { background: rgba(100,255,218,.05); }
+  tbody tr.vrow-even { background: rgba(10,14,26,.6); }
+  tbody tr.vrow-even:hover { background: rgba(100,255,218,.05); }
   td {
     padding: 8px 16px;
     color: var(--text);
@@ -1683,7 +1685,16 @@ function shouldShowCopyButton(key, val) {
   return false;
 }
 
-// ── Table Rendering ────────────────────────────────────────────────────────
+// ── Virtual-Scroll Table Rendering ────────────────────────────────────────
+// Only renders the ~OVERSCAN*2 rows visible in the viewport. A top/bottom
+// sentinel <tr> fakes the scroll height so the scrollbar looks right.
+// _vTable[scrollId] holds all virtual state; _tableRows/_tableKeys etc.
+// are kept in sync so copy/export/details still work unchanged.
+
+const _V_ROW_H = 37;   // px per row (padding 8+8 + border + line-height)
+const _V_OVERSCAN = 15; // extra rows above+below the viewport
+window._vTable = window._vTable || {};
+
 function renderTable(d, scrollId, toolbarId, countId) {
   const scroll = document.getElementById(scrollId);
   const toolbar = document.getElementById(toolbarId);
@@ -1696,23 +1707,28 @@ function renderTable(d, scrollId, toolbarId, countId) {
       <div class="empty-sub">Query returned 0 rows</div>
     </div>`;
     toolbar.style.display = 'none';
+    delete window._vTable[scrollId];
     return;
   }
 
   toolbar.style.display = '';
   countEl.innerHTML = `ROWS: <span>${d.data.length.toLocaleString()}</span>`;
 
-  // Store row data safely in a JS variable keyed by table+index
   window._tableRows = window._tableRows || {};
   window._tableRows[scrollId] = d.data;
   window._tableKeys = window._tableKeys || {};
-  window._tableKeys[scrollId] = d.keys;           // authoritative column order
+  window._tableKeys[scrollId] = d.keys;
   window._tableOrig = window._tableOrig || {};
-  window._tableOrig[scrollId] = d.data;            // original unsorted copy for reset
+  window._tableOrig[scrollId] = [...d.data];
   window._tableSorts = window._tableSorts || {};
-  window._tableSorts[scrollId] = { col: null, dir: 0 }; // dir: 0=none,1=asc,-1=desc
+  window._tableSorts[scrollId] = { col: null, dir: 0 };
   window._colFilters = window._colFilters || {};
   window._colFilters[scrollId] = {};
+
+  // filteredIndices: indices into _tableRows that pass all filters.
+  // null = no filter active, show everything.
+  const vState = { filteredIndices: null, renderedStart: -1, renderedEnd: -1 };
+  window._vTable[scrollId] = vState;
 
   const keys = d.keys;
   let html = `<table id="${scrollId}-table"><thead><tr>`;
@@ -1723,19 +1739,90 @@ function renderTable(d, scrollId, toolbarId, countId) {
   keys.forEach(k => {
     html += `<th><div class="col-filter-wrap"><input class="col-filter-input" placeholder="▼ filter  !exclude" oninput="colFilter('${scrollId}',this,'${escForOnclick(k)}')" data-col="${escHtml(k)}"><button class="col-filter-clear" onclick="clearColFilter('${scrollId}',this,'${escForOnclick(k)}')">×</button></div></th>`;
   });
-  html += `</tr></thead><tbody>`;
-
-  d.data.forEach((row, index) => {
-    html += renderTableRow(scrollId, row, index, keys);
-  });
-  html += '</tbody></table>';
+  html += `</tr></thead><tbody><tr id="${scrollId}-pad-top"><td colspan="${keys.length}"></td></tr><tr id="${scrollId}-pad-bot"><td colspan="${keys.length}"></td></tr></tbody></table>`;
 
   scroll.innerHTML = `<div class="fade-in">${html}</div>`;
+
+  // Attach scroll listener (remove old one first)
+  scroll.removeEventListener('scroll', scroll._vScrollHandler);
+  scroll._vScrollHandler = () => syncVirtualRows(scrollId);
+  scroll.addEventListener('scroll', scroll._vScrollHandler, { passive: true });
+
+  syncVirtualRows(scrollId);
+}
+
+function _vVisibleCount(scrollId) {
+  const v = window._vTable[scrollId];
+  if (!v) return 0;
+  const rows = window._tableRows[scrollId];
+  if (!rows) return 0;
+  return v.filteredIndices ? v.filteredIndices.length : rows.length;
+}
+
+function syncVirtualRows(scrollId) {
+  const v = window._vTable[scrollId];
+  if (!v) return;
+  const scroll = document.getElementById(scrollId);
+  const table = document.getElementById(`${scrollId}-table`);
+  if (!scroll || !table) return;
+  const rows = window._tableRows[scrollId];
+  const keys = window._tableKeys[scrollId];
+  if (!rows || !keys) return;
+
+  const indices = v.filteredIndices || rows.map((_, i) => i);
+  const totalRows = indices.length;
+  const totalHeight = totalRows * _V_ROW_H;
+
+  // Viewport geometry — use the scroll container's visible area
+  const scrollTop = scroll.scrollTop;
+  const viewH = scroll.clientHeight;
+
+  const firstVisible = Math.max(0, Math.floor(scrollTop / _V_ROW_H) - _V_OVERSCAN);
+  const lastVisible = Math.min(totalRows - 1, Math.ceil((scrollTop + viewH) / _V_ROW_H) + _V_OVERSCAN);
+
+  // Skip re-render if the window hasn't moved
+  if (firstVisible === v.renderedStart && lastVisible === v.renderedEnd) return;
+  v.renderedStart = firstVisible;
+  v.renderedEnd = lastVisible;
+
+  // Build the visible rows
+  let html = '';
+  for (let vi = firstVisible; vi <= lastVisible; vi++) {
+    const di = indices[vi]; // data index
+    const row = rows[di];
+    if (!row) continue;
+    const evenClass = vi % 2 === 1 ? ' vrow-even' : '';
+    html += `<tr class="${evenClass}" data-ridx="${di}" onclick="showObjectDetails('${scrollId}',${di})" oncontextmenu="showCtxMenu(event,'${scrollId}',${di})" style="cursor:pointer;height:${_V_ROW_H}px" title="Click for details / Right-click for actions">`;
+    keys.forEach(k => { html += `<td>${renderCell(k, row[k], row)}</td>`; });
+    html += '</tr>';
+  }
+
+  // Update sentinel paddings
+  const padTop = document.getElementById(`${scrollId}-pad-top`);
+  const padBot = document.getElementById(`${scrollId}-pad-bot`);
+  const tbody = table.querySelector('tbody');
+
+  // Remove old data rows (keep sentinels)
+  while (tbody.children.length > 2) {
+    tbody.removeChild(tbody.children[1]);
+  }
+
+  // Insert visible rows between sentinels
+  const temp = document.createElement('tbody');
+  temp.innerHTML = html;
+  while (temp.firstChild) {
+    tbody.insertBefore(temp.firstChild, padBot);
+  }
+
+  // Set sentinel heights
+  padTop.style.height = (firstVisible * _V_ROW_H) + 'px';
+  padBot.style.height = (Math.max(0, totalRows - lastVisible - 1) * _V_ROW_H) + 'px';
 }
 
 function renderTableRow(scrollId, row, index, keys) {
+  // Still used by the container tree (non-virtual path)
   let html = `<tr data-ridx="${index}" onclick="showObjectDetails('${scrollId}',${index})" oncontextmenu="showCtxMenu(event,'${scrollId}',${index})" style="cursor:pointer;" title="Click for details / Right-click for actions">`;
-  keys.forEach(k => { html += `<td>${renderCell(k, row[k])}</td>`; });
+  keys.forEach(k => { html += `<td>${renderCell(k, row[k], row)}</td>`; });
   return html + '</tr>';
 }
 
@@ -1760,7 +1847,6 @@ function sortTable(scrollId, col) {
     }
   });
 
-  const keys = window._tableKeys[scrollId] || [];
   let rows = sort.dir === 0
     ? [...(window._tableOrig[scrollId] || [])]
     : [...(window._tableOrig[scrollId] || [])];
@@ -1776,24 +1862,24 @@ function sortTable(scrollId, col) {
     });
   }
 
-  const tbody = table.querySelector('tbody');
-  if (!tbody) return;
-  tbody.innerHTML = rows.map((row, i) => renderTableRow(scrollId, row, i, keys)).join('');
-
-  // Update index mapping so row clicks still work after sort
   window._tableRows[scrollId] = rows;
 
-  // Re-apply active filters so sorted rows respect current filter state
-  applyColFilters(scrollId);
-  const filterInputId = scrollId === 'resultsScroll' ? 'filterBox' : 'customFilter';
-  const filterInput = document.getElementById(filterInputId);
-  if (filterInput && filterInput.value) {
-    scrollId === 'resultsScroll' ? filterTable(filterInput.value) : filterCustomTable(filterInput.value);
-  }
+  // Rebuild filtered indices + re-render virtual rows
+  rebuildFilteredIndices(scrollId);
 }
 
-function renderCell(key, val) {
-  if (val === null || val === undefined) return '<span style="color:var(--text3)">null</span>';
+function renderCell(key, val, row) {
+  if (val === null || val === undefined) {
+    // For name/principal columns, show the objectid (SID) instead of bare "null"
+    // so orphaned Base nodes from incomplete SharpHound collection are identifiable.
+    const k = key.toLowerCase();
+    const nameish = ['name','principal','user','computer','group','gpo','gmsa','smsa','host',
+                     'reader','controller','source','target','hvt','ownednode','delegateprincipal'].includes(k);
+    if (nameish && row?.objectid) {
+      return `<span style="color:var(--yellow)" title="Unresolved — object not collected">${escHtml(row.objectid)}</span>`;
+    }
+    return '<span style="color:var(--text3)">null</span>';
+  }
   if (Array.isArray(val)) return `<span style="color:var(--text2)">[${val.length > 3 ? val.slice(0,3).join(', ')+'…' : val.join(', ')}]</span>`;
 
   const k = key.toLowerCase();
@@ -1889,21 +1975,16 @@ function showError(msg, scrollId) {
 }
 
 // ── Filter ─────────────────────────────────────────────────────────────────
+// Global text filter stashes its term so rebuildFilteredIndices can combine
+// it with column filters in a single pass.
+window._globalFilter = window._globalFilter || {};
+
 function filterTable(val) {
   // Tree view path: container-tree renders into #resultsScroll without a table.
   const tree = document.querySelector('#resultsScroll .tree-root');
   if (tree) return filterTreeView(tree, val);
-  const tbl = document.querySelector('#resultsScroll table');
-  if (!tbl) return;
-  const q = val.toLowerCase();
-  let visible = 0;
-  tbl.querySelectorAll('tbody tr').forEach(tr => {
-    const show = tr.textContent.toLowerCase().includes(q);
-    tr.style.display = show ? '' : 'none';
-    if (show) visible++;
-  });
-  const countEl = document.getElementById('resultCount');
-  if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
+  window._globalFilter['resultsScroll'] = (val || '').toLowerCase();
+  rebuildFilteredIndices('resultsScroll');
 }
 
 function filterTreeView(root, val) {
@@ -1969,17 +2050,8 @@ function filterTreeView(root, val) {
 }
 
 function filterCustomTable(val) {
-  const tbl = document.querySelector('#customScroll table');
-  if (!tbl) return;
-  const q = val.toLowerCase();
-  let visible = 0;
-  tbl.querySelectorAll('tbody tr').forEach(tr => {
-    const show = tr.textContent.toLowerCase().includes(q);
-    tr.style.display = show ? '' : 'none';
-    if (show) visible++;
-  });
-  const countEl = document.getElementById('customCount');
-  if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
+  window._globalFilter['customScroll'] = (val || '').toLowerCase();
+  rebuildFilteredIndices('customScroll');
 }
 
 // ── Column Filters ─────────────────────────────────────────────────────────
@@ -2003,26 +2075,63 @@ function clearSearchBox(id, filterFn) {
 }
 
 function applyColFilters(scrollId) {
-  const filters = window._colFilters?.[scrollId] || {};
-  const rows = window._tableRows?.[scrollId];
+  // Delegate to the unified rebuild (keeps the old call sites working)
+  rebuildFilteredIndices(scrollId);
+}
+
+function rebuildFilteredIndices(scrollId) {
+  const v = window._vTable[scrollId];
+  if (!v) return;
+  const rows = window._tableRows[scrollId];
+  const keys = window._tableKeys[scrollId];
   if (!rows) return;
-  const table = document.getElementById(`${scrollId}-table`);
-  if (!table) return;
-  const trs = table.querySelectorAll('tbody tr');
-  trs.forEach((tr, i) => {
-    const row = rows[i];
-    if (!row) { tr.style.display = ''; return; }
-    const show = Object.entries(filters).every(([col, q]) => {
-      if (!q) return true;
-      const exclude = q.startsWith('!');
-      const term = exclude ? q.slice(1) : q;
-      if (!term) return true;
-      const val = row[col];
-      const match = val !== null && val !== undefined && String(val).toLowerCase().includes(term);
-      return exclude ? !match : match;
-    });
-    tr.style.display = show ? '' : 'none';
-  });
+
+  const colFilters = window._colFilters?.[scrollId] || {};
+  const globalQ = (window._globalFilter?.[scrollId] || '').trim();
+  const hasColFilters = Object.values(colFilters).some(q => q);
+  const hasGlobal = !!globalQ;
+
+  if (!hasColFilters && !hasGlobal) {
+    v.filteredIndices = null; // show all
+  } else {
+    const indices = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      // Column filters
+      let pass = true;
+      if (hasColFilters) {
+        for (const [col, q] of Object.entries(colFilters)) {
+          if (!q) continue;
+          const exclude = q.startsWith('!');
+          const term = exclude ? q.slice(1) : q;
+          if (!term) continue;
+          const val = row[col];
+          const match = val !== null && val !== undefined && String(val).toLowerCase().includes(term);
+          if (exclude ? match : !match) { pass = false; break; }
+        }
+      }
+      // Global text filter
+      if (pass && hasGlobal) {
+        const rowText = keys.map(k => String(row[k] ?? '')).join(' ').toLowerCase();
+        if (!rowText.includes(globalQ)) pass = false;
+      }
+      if (pass) indices.push(i);
+    }
+    v.filteredIndices = indices;
+  }
+
+  // Update count display
+  const countId = scrollId === 'resultsScroll' ? 'resultCount' : 'customCount';
+  const countEl = document.getElementById(countId);
+  const visible = _vVisibleCount(scrollId);
+  if (countEl) countEl.innerHTML = `ROWS: <span>${visible.toLocaleString()}</span>`;
+
+  // Force re-render from the top
+  v.renderedStart = -1;
+  v.renderedEnd = -1;
+  const scroll = document.getElementById(scrollId);
+  if (scroll) scroll.scrollTop = 0;
+  syncVirtualRows(scrollId);
 }
 
 // ── Context Menu ───────────────────────────────────────────────────────────
@@ -2243,6 +2352,13 @@ function getVisibleRows(scrollId) {
   const keys = window._tableKeys?.[scrollId];
   const allRows = window._tableRows?.[scrollId];
   if (!keys || !allRows) return null;
+  const v = window._vTable?.[scrollId];
+  // Virtual path: use filteredIndices (or all rows if no filter)
+  if (v) {
+    const indices = v.filteredIndices || allRows.map((_, i) => i);
+    return { keys, rows: indices.map(i => allRows[i]).filter(Boolean) };
+  }
+  // Fallback (tree view, non-virtual tables): walk the DOM
   const tbl = document.getElementById(`${scrollId}-table`);
   if (!tbl) return null;
   const rows = [];
@@ -3213,12 +3329,17 @@ async function showObjectDetails(tableId, rowIndex) {
           ? `g.objectid = '${groupSid}'`
           : (lookupName ? `g.name = '${lookupName.replace(/'/g,"\\'")}'` : null);
         if (groupWhere) {
+          // Direct members (single-hop) + transitive members (APOC
+          // subgraphNodes, depth-capped at 5). APOC's traversal avoids
+          // revisiting nodes and completes in <1s even on large groups
+          // where the old MemberOf*1.. took 3+ minutes.
+          const groupSid = nodeData.props?.objectid || lookupSid;
           const [directRes, unrolledRes] = await Promise.all([
             apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf]->(g:Group) WHERE ${groupWhere} RETURN m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
             }),
             apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({cypher: `MATCH (m)-[:MemberOf*1..]->(g:Group) WHERE ${groupWhere} RETURN DISTINCT m.name AS name, [lbl IN labels(m) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
+              body: JSON.stringify({cypher: `MATCH (g:Group) WHERE ${groupWhere} CALL apoc.path.subgraphNodes(g, {relationshipFilter: '<MemberOf', maxLevel: 5}) YIELD node WHERE node <> g RETURN node.name AS name, [lbl IN labels(node) WHERE lbl <> 'Base'][0] AS type ORDER BY type, name LIMIT 500`})
             })
           ]);
           const dd = await directRes.json();

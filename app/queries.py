@@ -149,7 +149,7 @@ ORDER BY Domain, User"""
             "description": "Principals allowed to delegate to specific services — potential s4u2proxy abuse",
             "cypher": """MATCH (n)
 WHERE n.allowedtodelegate IS NOT NULL AND size(n.allowedtodelegate) > 0
-RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, n.name AS Principal, n.domain AS Domain,
+RETURN [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type, coalesce(n.name, n.objectid) AS Principal, n.domain AS Domain,
        n.allowedtodelegate AS DelegatesToServices
 ORDER BY Type, Domain, Principal"""
         },
@@ -158,7 +158,7 @@ ORDER BY Type, Domain, Principal"""
             "name": "RBCD — AllowedToAct",
             "description": "Objects configured with Resource-Based Constrained Delegation",
             "cypher": """MATCH p=(n)-[:AllowedToAct]->(c:Computer)
-RETURN n.name AS DelegatePrincipal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS DelegatePrincipal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS TargetComputer, c.domain AS Domain
 ORDER BY Domain, TargetComputer"""
         },
@@ -207,7 +207,7 @@ ORDER BY u.admincount DESC, TargetUser"""
             "description": "Full control over computer objects — RBCD write, shadow creds",
             "cypher": """MATCH p=(n)-[:GenericAll]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        c.name AS TargetComputer, c.domain AS Domain
 ORDER BY Domain, TargetComputer"""
         },
@@ -217,7 +217,7 @@ ORDER BY Domain, TargetComputer"""
             "description": "Full control over high-value groups — add yourself as member",
             "cypher": """MATCH p=(n)-[:GenericAll]->(g:Group)
 WHERE g.admincount = true
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        g.name AS TargetGroup
 ORDER BY TargetGroup, Controller"""
         },
@@ -235,7 +235,7 @@ ORDER BY Group, Controller"""
             "name": "WriteDACL / WriteOwner / Owns on Domain",
             "description": "Principals that can modify domain ACL — path to granting DCSync",
             "cypher": """MATCH p=(n)-[r:WriteDacl|WriteOwner|Owns|GenericAll]->(d:Domain)
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        type(r) AS Right, d.name AS Domain
 ORDER BY Domain, Principal"""
         },
@@ -269,7 +269,7 @@ ORDER BY TargetAdmin, Controller"""
             "description": "AddKeyCredentialLink / GenericWrite on users/computers — add msDS-KeyCredentialLink",
             "cypher": """MATCH p=(n)-[:AddKeyCredentialLink|GenericWrite|GenericAll]->(t)
 WHERE (t:User OR t:Computer) AND t.enabled = true
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        t.name AS Target, [lbl IN labels(t) WHERE lbl <> 'Base'][0] AS TargetType
 ORDER BY TargetType, Target"""
         },
@@ -278,7 +278,7 @@ ORDER BY TargetType, Target"""
             "name": "AllExtendedRights",
             "description": "Grants all extended rights including GetChanges+GetChangesAll, ForceChangePw",
             "cypher": """MATCH p=(n)-[:AllExtendedRights]->(t)
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        t.name AS Target, [lbl IN labels(t) WHERE lbl <> 'Base'][0] AS TargetType
 ORDER BY TargetType, Target"""
         },
@@ -287,7 +287,7 @@ ORDER BY TargetType, Target"""
             "name": "Write Access to GPOs",
             "description": "Who can modify GPOs — potential mass lateral movement via computer startup scripts",
             "cypher": """MATCH p=(n)-[:GenericAll|GenericWrite|WriteOwner|WriteDacl]->(g:GPO)
-RETURN n.name AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
+RETURN coalesce(n.name, n.objectid) AS Controller, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS ControllerType,
        g.name AS GPO, g.domain AS Domain
 ORDER BY Domain, GPO"""
         },
@@ -296,7 +296,7 @@ ORDER BY Domain, GPO"""
             "name": "LAPS Password Readers",
             "description": "Who can read LAPS managed local admin passwords",
             "cypher": """MATCH p=(n)-[:ReadLAPSPassword]->(c:Computer)
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -305,8 +305,8 @@ ORDER BY Domain, Computer"""
             "name": "gMSA Password Readers",
             "description": "Who can retrieve a gMSA's managed password (msDS-GroupMSAMembership) — recover the plaintext with the account's group membership",
             "cypher": """MATCH (n)-[:ReadGMSAPassword]->(m)
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
-       m.name AS gMSA, m.domain AS Domain
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+       coalesce(m.name, m.objectid) AS gMSA, m.domain AS Domain
 ORDER BY Domain, gMSA, Principal"""
         },
         {
@@ -317,7 +317,7 @@ ORDER BY Domain, gMSA, Principal"""
 WHERE n.name =~ '(?i)(domain users|authenticated users|everyone|users|pre-windows 2000 compatible access)@.*'
    OR n.objectid IN ['S-1-1-0','S-1-5-11','S-1-5-7']
    OR n.objectid ENDS WITH '-513'
-RETURN n.name AS Reader, m.name AS gMSA, m.domain AS Domain
+RETURN coalesce(n.name, n.objectid) AS Reader, m.name AS gMSA, m.domain AS Domain
 ORDER BY Domain, gMSA"""
         },
         {
@@ -325,7 +325,7 @@ ORDER BY Domain, gMSA"""
             "name": "SMSA Password Dumpers",
             "description": "Hosts with a standalone MSA installed — SYSTEM on the host can extract the account's password from LSA secrets",
             "cypher": """MATCH (c:Computer)-[:DumpSMSAPassword]->(m)
-RETURN c.name AS Host, m.name AS SMSA, m.domain AS Domain
+RETURN coalesce(c.name, c.objectid) AS Host, m.name AS SMSA, m.domain AS Domain
 ORDER BY Domain, Host"""
         },
     ],
@@ -414,7 +414,7 @@ ORDER BY Template, Principal"""
             "description": "Complete local admin map — who can admin where",
             "cypher": """MATCH p=(n)-[:AdminTo]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain, c.operatingsystem AS OS
 ORDER BY Domain, Computer, Principal"""
         },
@@ -424,7 +424,7 @@ ORDER BY Domain, Computer, Principal"""
             "description": "Users/groups with the most local admin rights across the environment",
             "cypher": """MATCH (u)-[:AdminTo|MemberOf*1..5]->(c:Computer)
 WHERE (u:User OR u:Group) AND c.enabled = true
-RETURN u.name AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(u.name, u.objectid) AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
        count(DISTINCT c) AS AdminCount
 ORDER BY AdminCount DESC
 LIMIT 30"""
@@ -446,7 +446,7 @@ ORDER BY Domain, Computer"""
             "description": "All CanRDP edges — lateral movement via Remote Desktop",
             "cypher": """MATCH p=(n)-[:CanRDP]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -456,7 +456,7 @@ ORDER BY Domain, Computer"""
             "description": "Who can PSRemote to which computers",
             "cypher": """MATCH p=(n)-[:CanPSRemote]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -466,7 +466,7 @@ ORDER BY Domain, Computer"""
             "description": "ExecuteDCOM edges — lateral movement via DCOM",
             "cypher": """MATCH p=(n)-[:ExecuteDCOM]->(c:Computer)
 WHERE c.enabled = true
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS Computer, c.domain AS Domain
 ORDER BY Domain, Computer"""
         },
@@ -485,7 +485,7 @@ ORDER BY Domain, Computer"""
             "name": "SQL Admin Rights",
             "description": "Principals with SQLAdmin access to computers running SQL Server",
             "cypher": """MATCH p=(n)-[:SQLAdmin]->(c:Computer)
-RETURN n.name AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
        c.name AS SQLServer, c.domain AS Domain
 ORDER BY Domain, SQLServer"""
         },
@@ -560,7 +560,7 @@ LIMIT 50"""
             "cypher": """MATCH p=shortestPath((n)-[:MemberOf|AdminTo|HasSession|CanRDP|CanPSRemote|ExecuteDCOM|AllowedToDelegate|AllowedToAct|GenericAll|GenericWrite|WriteOwner|WriteDacl|Owns|ForceChangePassword|AllExtendedRights|AddMember|AddSelf|ReadLAPSPassword|ReadGMSAPassword|DCSync|GetChanges|GetChangesAll|GetChangesInFilteredSet|AddKeyCredentialLink|WriteSPN|WriteAccountRestrictions|HasSIDHistory|GpLink|SQLAdmin*1..8]->(g:Group))
 WHERE g.name =~ '(?i)domain admins@.*'
   AND n.domain IS NOT NULL AND n.domain <> g.domain
-RETURN n.name AS Source, n.domain AS SourceDomain,
+RETURN coalesce(n.name, n.objectid) AS Source, n.domain AS SourceDomain,
        g.domain AS TargetDomain, length(p) AS Hops
 ORDER BY Hops, SourceDomain
 LIMIT 25"""
@@ -580,7 +580,7 @@ ORDER BY UserDomain, GroupDomain"""
             "name": "SID History Entries",
             "description": "Users with SIDHistory — can impersonate other domain principals",
             "cypher": """MATCH p=(u)-[:HasSIDHistory]->(n)
-RETURN u.name AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
+RETURN coalesce(u.name, u.objectid) AS Principal, [lbl IN labels(u) WHERE lbl <> 'Base'][0] AS Type,
        n.name AS HistorySID, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS SIDType
 ORDER BY Type, Principal"""
         },
