@@ -2402,6 +2402,7 @@ function copyMarkdown() {
   d.rows.forEach(row => {
     lines.push('| ' + d.keys.map((k, i) => pad(cellText(row[k]), widths[i])).join(' | ') + ' |');
   });
+  lines.push(sep);
   copyToClipboard(lines.join('\n'));
   toast(`Copied ${d.rows.length} rows as Markdown`, 'ok');
 }
