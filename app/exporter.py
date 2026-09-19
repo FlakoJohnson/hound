@@ -155,6 +155,7 @@ class BloodHoundExporter:
         q = f"""
         MATCH (m)-[r:MemberOf]->(n:Group)
         {dfilter}
+        {'AND' if domain else 'WHERE'} coalesce(r.synthesized, false) = false
         RETURN n.objectid AS grp, m.objectid AS member, labels(m) AS mlabels,
                coalesce(r.isprimarygroup, false) AS isprimary
         """
