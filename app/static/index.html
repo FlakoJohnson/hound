@@ -3298,7 +3298,7 @@ async function showObjectDetails(tableId, rowIndex) {
   }
 
   // Build cypher queries to get node props + group memberships in parallel
-  let nodeData = null, groups = [], members = null;
+  let nodeData = null, groups = [], effectiveGroups = [], members = null;
   try {
     const where = lookupSid
       ? `n.objectid = '${lookupSid}'`
@@ -3306,18 +3306,23 @@ async function showObjectDetails(tableId, rowIndex) {
 
     if (where) {
       const typeFilter = (!lookupSid && lookupType) ? `:${lookupType}` : '';
-      const [nodeRes, groupRes] = await Promise.all([
+      const [nodeRes, groupRes, effectiveRes] = await Promise.all([
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} RETURN properties(n) AS props, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS _type LIMIT 1`})
         }),
         apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({cypher: `MATCH (n)-[:MemberOf]->(g:Group) WHERE ${where} RETURN g.name AS name, g.admincount AS admincount, g.domain AS domain ORDER BY g.admincount DESC, g.name`})
+        }),
+        apiFetch('/api/run', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({cypher: `MATCH (n${typeFilter}) WHERE ${where} CALL apoc.path.subgraphNodes(n, {relationshipFilter: 'MemberOf>', maxLevel: 5}) YIELD node WHERE node <> n AND 'Group' IN labels(node) RETURN node.name AS name, node.admincount AS admincount, node.domain AS domain ORDER BY node.admincount DESC, node.name`})
         })
       ]);
       const nd = await nodeRes.json();
       const gd = await groupRes.json();
+      const ed = await effectiveRes.json();
       if (nd.success && nd.data.length > 0) nodeData = { type: nd.data[0]._type, props: nd.data[0].props };
       if (gd.success) groups = gd.data;
+      if (ed.success) effectiveGroups = ed.data;
 
       // If the clicked object IS a group, also fetch who's inside it —
       // direct MemberOf edges, plus an unrolled/effective view that
@@ -3365,11 +3370,11 @@ async function showObjectDetails(tableId, rowIndex) {
   const resolvedObjectId = nodeData?.props?.objectid || lookupSid || '';
   document.getElementById('detailsOverlay').dataset.objectid = resolvedObjectId;
 
-  renderObjectDetails(nodeData?.props || null, objectData, groups, members);
+  renderObjectDetails(nodeData?.props || null, objectData, groups, members, effectiveGroups);
 }
 
 
-function renderObjectDetails(fullProps, rowData, groups = [], members = null) {
+function renderObjectDetails(fullProps, rowData, groups = [], members = null, effectiveGroups = []) {
   const content = document.getElementById('detailsContent');
   let html = '';
 
@@ -3384,20 +3389,35 @@ function renderObjectDetails(fullProps, rowData, groups = [], members = null) {
   </div>`;
 
   // Group Memberships
-  if (groups.length > 0) {
-    html += `<div class="details-section">`;
-    html += `<h4>Group Memberships (${groups.length})</h4>`;
-    groups.forEach(g => {
+  if (groups.length > 0 || effectiveGroups.length > 0) {
+    const renderGroupRows = (list) => list.map(g => {
       const shortName = g.name ? g.name.split('@')[0] : g.name;
       const domain    = g.name && g.name.includes('@') ? g.name.split('@')[1] : '';
       const isAdmin   = g.admincount;
       const copyBtn   = `<span class="copy-btn" onclick="copyToClipboard('${escForOnclick(g.name)}',this);event.stopPropagation();">${getCopyIcon()}</span>`;
-      html += `<div class="details-property">
+      return `<div class="details-property">
         <div class="details-value" style="color:${isAdmin ? 'var(--red)' : 'var(--text)'}">
           ${isAdmin ? '<span style="color:var(--red);margin-right:4px">⚑</span>' : ''}${escHtml(shortName)}<span style="color:var(--text3);font-size:11px">@${escHtml(domain)}</span>${copyBtn}
         </div>
       </div>`;
-    });
+    }).join('') || '<div style="color:var(--text3);padding:8px 0">None.</div>';
+
+    const hasEffective = effectiveGroups.length > 0 && effectiveGroups.length !== groups.length;
+    html += `<div class="details-section">`;
+    if (hasEffective) {
+      html += `<h4 style="display:flex;justify-content:space-between;align-items:center">
+        <span>Group Memberships</span>
+        <span style="font-size:11px;font-weight:normal">
+          <span id="groupViewDirect" onclick="toggleGroupView('direct')" style="cursor:pointer;color:var(--green);margin-right:10px">Direct (${groups.length})</span>
+          <span id="groupViewEffective" onclick="toggleGroupView('effective')" style="cursor:pointer;color:var(--text3)">Effective (${effectiveGroups.length})</span>
+        </span>
+      </h4>`;
+      html += `<div id="groupListDirect">${renderGroupRows(groups)}</div>`;
+      html += `<div id="groupListEffective" style="display:none">${renderGroupRows(effectiveGroups)}</div>`;
+    } else {
+      html += `<h4>Group Memberships (${groups.length})</h4>`;
+      html += renderGroupRows(groups);
+    }
     html += `</div>`;
   }
 
@@ -3501,6 +3521,19 @@ function toggleMemberView(mode) {
   unrolled.style.display = showDirect ? 'none' : '';
   btnDirect.style.color = showDirect ? 'var(--green)' : 'var(--text3)';
   btnUnrolled.style.color = showDirect ? 'var(--text3)' : 'var(--green)';
+}
+
+function toggleGroupView(mode) {
+  const direct = document.getElementById('groupListDirect');
+  const effective = document.getElementById('groupListEffective');
+  const btnDirect = document.getElementById('groupViewDirect');
+  const btnEffective = document.getElementById('groupViewEffective');
+  if (!direct || !effective) return;
+  const showDirect = mode === 'direct';
+  direct.style.display = showDirect ? '' : 'none';
+  effective.style.display = showDirect ? 'none' : '';
+  btnDirect.style.color = showDirect ? 'var(--green)' : 'var(--text3)';
+  btnEffective.style.color = showDirect ? 'var(--text3)' : 'var(--green)';
 }
 
 function closeDetails(event) {
