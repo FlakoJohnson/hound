@@ -2189,7 +2189,11 @@ function showCtxMenu(e, scrollId, rowIndex) {
   lbl.textContent = name ? name.split('@')[0].slice(0, 28) : 'NODE';
 
   const rowType = row?.Type || row?.type || '';
-  const isContainer = rowType === 'OU' || rowType === 'Container' || rowType === 'Domain';
+  let isContainer = rowType === 'OU' || rowType === 'Container' || rowType === 'Domain';
+  if (!isContainer && row) {
+    const dn = row.DN || row.dn || row.DistinguishedName || row.distinguishedname || '';
+    if (dn && dn.startsWith('OU=')) isContainer = true;
+  }
   document.getElementById('ctxListContents').style.display = isContainer ? '' : 'none';
   document.getElementById('ctxSepContents').style.display = isContainer ? '' : 'none';
 
@@ -2301,10 +2305,13 @@ async function ctxListContents() {
   const row = _ctxRow();
   if (!row) return;
   const oid = row.objectid || row.ObjectID;
-  if (!oid) return toast('No objectid for this node', 'err');
-  const parentName = row.Name || row.name || oid;
+  const dn = row.DN || row.dn || row.DistinguishedName || row.distinguishedname || '';
+  if (!oid && !dn) return toast('No objectid or DN for this node', 'err');
+  const parentName = row.Name || row.name || oid || dn;
 
-  const cypher = `MATCH (parent {objectid: $oid})-[:Contains]->(child)
+  const whereClause = oid ? 'parent.objectid = $oid' : 'parent.distinguishedname = $dn';
+  const cypher = `MATCH (parent)-[:Contains]->(child)
+WHERE ${whereClause}
 RETURN child.name AS Name,
        [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS Type,
        child.objectid AS ObjectID,
@@ -2312,10 +2319,11 @@ RETURN child.name AS Name,
        child.enabled AS Enabled
 ORDER BY Type, Name`;
 
+  const params = oid ? {oid} : {dn};
   currentQuery = {name: 'OU Contents: ' + parentName.split('@')[0], description: 'Direct children of ' + parentName, cypher};
   document.getElementById('qTitle').textContent = currentQuery.name.toUpperCase();
   document.getElementById('qDesc').textContent = currentQuery.description;
-  document.getElementById('cypherInput').value = cypher.replace('$oid', `'${oid}'`);
+  document.getElementById('cypherInput').value = cypher.replace(oid ? '$oid' : '$dn', `'${oid || dn}'`);
   document.getElementById('execTime').textContent = '';
   document.getElementById('queryPanel').style.display = '';
   const _fb = document.getElementById('filterBox');
@@ -2326,7 +2334,7 @@ ORDER BY Type, Name`;
   try {
     const r = await apiFetch('/api/run', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cypher, params: {oid}})
+      body: JSON.stringify({cypher, params})
     });
     const d = await r.json();
     const ms = Math.round(performance.now() - t0);
