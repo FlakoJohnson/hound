@@ -322,6 +322,20 @@
   }
   .query-description { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
 
+  #queryParams:empty { display: none; }
+  #queryParams { margin-bottom: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .param-row { display: flex; align-items: center; gap: 8px; }
+  .param-label {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--cyan); font-family: var(--font-disp); white-space: nowrap; min-width: 60px;
+  }
+  .param-input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); padding: 6px 10px; font-size: 13px; font-family: var(--font-mono);
+  }
+  .param-input:focus { border-color: var(--cyan); box-shadow: var(--glow-c); outline: none; }
+  .param-input::placeholder { color: var(--text3); }
+
   .cypher-container {
     position: relative;
     background: var(--bg);
@@ -1242,6 +1256,7 @@
     <div class="query-panel" id="queryPanel" style="display:none">
       <div class="query-title" id="qTitle">SELECT A QUERY</div>
       <div class="query-description" id="qDesc"></div>
+      <div id="queryParams"></div>
       <div class="cypher-container">
         <span class="cypher-label">CYPHER</span>
         <textarea class="cypher-input" id="cypherInput" rows="4" spellcheck="false"></textarea>
@@ -1527,7 +1542,6 @@ function renderNav(queries) {
 }
 
 function selectQuery(q, el) {
-  // Deselect previous
   document.querySelectorAll('.query-item.active').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
   currentQuery = q;
@@ -1538,8 +1552,16 @@ function selectQuery(q, el) {
   document.getElementById('queryPanel').style.display = '';
   document.getElementById('execTime').textContent = '';
 
+  const paramsDiv = document.getElementById('queryParams');
+  paramsDiv.innerHTML = '';
+  if (q.params?.length) {
+    for (const p of q.params) {
+      paramsDiv.innerHTML += `<div class="param-row"><span class="param-label">${escHtml(p.label)}</span><input class="param-input" data-param="${escAttr(p.key)}" placeholder="${escAttr(p.placeholder || '')}" onkeydown="if(event.key==='Enter')runQuery()"></div>`;
+    }
+  }
+
   showTab('results');
-  runQuery();
+  if (!q.params?.length) runQuery();
 }
 
 // ── Query Execution ────────────────────────────────────────────────────────
@@ -1558,7 +1580,11 @@ function applyDomainFilter(d) {
 async function runQuery() {
   const cypher = document.getElementById('cypherInput').value.trim();
   if (!cypher) return;
-  // Clear stale filter from a previous Open-in-Visualizer or other action.
+  const params = {};
+  document.querySelectorAll('#queryParams .param-input').forEach(el => {
+    const v = el.value.trim();
+    if (v) params[el.dataset.param] = v;
+  });
   const _fb = document.getElementById('filterBox');
   if (_fb) _fb.value = '';
   setRunning(true);
@@ -1568,7 +1594,7 @@ async function runQuery() {
     const r = await apiFetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({cypher})
+      body: JSON.stringify({cypher, params})
     });
     const d = await r.json();
     const ms = Math.round(performance.now() - t0);
@@ -2162,9 +2188,14 @@ function showCtxMenu(e, scrollId, rowIndex) {
   }
   lbl.textContent = name ? name.split('@')[0].slice(0, 28) : 'NODE';
 
+  const rowType = row?.Type || row?.type || '';
+  const isContainer = rowType === 'OU' || rowType === 'Container' || rowType === 'Domain';
+  document.getElementById('ctxListContents').style.display = isContainer ? '' : 'none';
+  document.getElementById('ctxSepContents').style.display = isContainer ? '' : 'none';
+
   const vw = window.innerWidth, vh = window.innerHeight;
   menu.style.display = 'block';
-  const mw = 200, mh = 220;
+  const mw = 200, mh = isContainer ? 260 : 220;
   menu.style.left = (e.clientX + mw > vw ? vw - mw - 8 : e.clientX) + 'px';
   menu.style.top  = (e.clientY + mh > vh ? vh - mh - 8 : e.clientY) + 'px';
 }
@@ -2263,6 +2294,53 @@ async function ctxOpenInVisualizer() {
       }
     }, 150);
   }
+}
+
+async function ctxListContents() {
+  hideCtxMenu();
+  const row = _ctxRow();
+  if (!row) return;
+  const oid = row.objectid || row.ObjectID;
+  if (!oid) return toast('No objectid for this node', 'err');
+  const parentName = row.Name || row.name || oid;
+
+  const cypher = `MATCH (parent {objectid: $oid})-[:Contains]->(child)
+RETURN child.name AS Name,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS Type,
+       child.objectid AS ObjectID,
+       child.distinguishedname AS DN,
+       child.enabled AS Enabled
+ORDER BY Type, Name`;
+
+  currentQuery = {name: 'OU Contents: ' + parentName.split('@')[0], description: 'Direct children of ' + parentName, cypher};
+  document.getElementById('qTitle').textContent = currentQuery.name.toUpperCase();
+  document.getElementById('qDesc').textContent = currentQuery.description;
+  document.getElementById('cypherInput').value = cypher.replace('$oid', `'${oid}'`);
+  document.getElementById('execTime').textContent = '';
+  document.getElementById('queryPanel').style.display = '';
+  const _fb = document.getElementById('filterBox');
+  if (_fb) _fb.value = '';
+  showTab('results');
+  setRunning(true);
+  const t0 = performance.now();
+  try {
+    const r = await apiFetch('/api/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cypher, params: {oid}})
+    });
+    const d = await r.json();
+    const ms = Math.round(performance.now() - t0);
+    document.getElementById('execTime').textContent = `${ms}ms`;
+    if (d.success) {
+      lastResultData = d;
+      renderTable(d, 'resultsScroll', 'resultsToolbar', 'resultCount');
+    } else {
+      showError(d.error, 'resultsScroll');
+    }
+  } catch(e) {
+    showError(e.message, 'resultsScroll');
+  }
+  setRunning(false);
 }
 
 async function ctxMarkOwned() {
@@ -3756,6 +3834,8 @@ init();
   <div class="ctx-label" id="ctxNodeLabel">NODE</div>
   <div class="ctx-separator" id="ctxSep1"></div>
   <div class="ctx-item" id="ctxOpenInTree" onclick="ctxOpenInVisualizer()">🌲 Open in Visualizer</div>
+  <div class="ctx-separator" id="ctxSepContents" style="display:none"></div>
+  <div class="ctx-item" id="ctxListContents" onclick="ctxListContents()" style="display:none">📋 List Contents</div>
   <div class="ctx-separator"></div>
   <div class="ctx-item danger" id="ctxMarkOwned"     onclick="ctxMarkOwned()">⚑ Mark as Owned</div>
   <div class="ctx-item good"   id="ctxMarkHighValue" onclick="ctxMarkHighValue()">★ Mark High Value</div>

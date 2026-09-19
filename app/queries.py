@@ -82,6 +82,22 @@ ORDER BY Domain, GPO, LinkedOU"""
 RETURN o.name AS OU, o.domain AS Domain, o.distinguishedname AS DN
 ORDER BY Domain, OU"""
         },
+        {
+            "id": "ou_contents",
+            "name": "OU Contents",
+            "description": "List direct children of an OU — paste the DN below and execute",
+            "params": [
+                {"key": "dn", "label": "OU Distinguished Name", "placeholder": "OU=Servers,OU=Computer Resources,DC=domain,DC=com"}
+            ],
+            "cypher": """MATCH (parent)-[:Contains]->(child)
+WHERE parent.distinguishedname = $dn
+RETURN child.name AS Name,
+       [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS Type,
+       child.objectid AS ObjectID,
+       child.distinguishedname AS DN,
+       child.enabled AS Enabled
+ORDER BY Type, Name"""
+        },
     ],
 
     "Kerberos Attacks": [
