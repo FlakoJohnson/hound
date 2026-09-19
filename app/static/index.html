@@ -2191,8 +2191,9 @@ function showCtxMenu(e, scrollId, rowIndex) {
   const rowType = row?.Type || row?.type || '';
   let isContainer = rowType === 'OU' || rowType === 'Container' || rowType === 'Domain';
   if (!isContainer && row) {
-    const dn = row.DN || row.dn || row.DistinguishedName || row.distinguishedname || '';
-    if (dn && dn.startsWith('OU=')) isContainer = true;
+    for (const v of Object.values(row)) {
+      if (v && typeof v === 'string' && v.startsWith('OU=') && v.includes(',DC=')) { isContainer = true; break; }
+    }
   }
   document.getElementById('ctxListContents').style.display = isContainer ? '' : 'none';
   document.getElementById('ctxSepContents').style.display = isContainer ? '' : 'none';
@@ -2305,9 +2306,14 @@ async function ctxListContents() {
   const row = _ctxRow();
   if (!row) return;
   const oid = row.objectid || row.ObjectID;
-  const dn = row.DN || row.dn || row.DistinguishedName || row.distinguishedname || '';
+  let dn = row.DN || row.dn || row.DistinguishedName || row.distinguishedname || '';
+  if (!dn) {
+    for (const v of Object.values(row)) {
+      if (v && typeof v === 'string' && v.startsWith('OU=') && v.includes(',DC=')) { dn = v; break; }
+    }
+  }
   if (!oid && !dn) return toast('No objectid or DN for this node', 'err');
-  const parentName = row.Name || row.name || oid || dn;
+  const parentName = row.Name || row.name || row.LinkedOU || oid || dn;
 
   const whereClause = oid ? 'parent.objectid = $oid' : 'parent.distinguishedname = $dn';
   const cypher = `MATCH (parent)-[:Contains]->(child)
