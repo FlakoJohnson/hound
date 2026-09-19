@@ -355,6 +355,7 @@ class BloodHoundImporter:
         # Both passes are idempotent, so re-uploads don't grow the graph.
         self._backfill_from_dn()
         self._synthesize_dcsync()
+        self._synthesize_wellknown_membership()
         return results
 
     def _synthesize_dcsync(self):
@@ -388,6 +389,57 @@ class BloodHoundImporter:
                     logger.info(f"DCSync edges present for {r['created']} principal(s)")
         except Exception as e:
             logger.warning(f"DCSync synthesis failed: {e}")
+
+    def _synthesize_wellknown_membership(self):
+        """Create MemberOf edges for well-known Windows security principals.
+
+        Windows assigns implicit SIDs at logon that are not LDAP group members.
+        BloodHound CE's analysis pipeline synthesizes them; without them,
+        MemberOf traversals under-count by missing the Authenticated Users /
+        Everyone chain.
+
+        Per domain:
+          Domain Users  ({SID}-513)     → Authenticated Users ({FQDN}-S-1-5-11)
+          Domain Computers ({SID}-515)  → Authenticated Users
+          Authenticated Users           → Everyone ({FQDN}-S-1-1-0)
+
+        Marked synthesized so the exporter excludes them.
+        """
+        try:
+            with self.driver.session() as session:
+                r = session.run("""
+                    MATCH (d:Domain)
+                    WHERE d.objectid IS NOT NULL AND d.name IS NOT NULL
+                    WITH d.objectid AS sid, toUpper(d.name) AS domain
+                    UNWIND [{suffix: '-513'}, {suffix: '-515'}] AS src
+                    MATCH (member:Base {objectid: sid + src.suffix})
+                    MERGE (au:Base {objectid: domain + '-S-1-5-11'})
+                    ON CREATE SET au:Group, au.name = 'AUTHENTICATED USERS@' + domain,
+                                  au.domain = domain
+                    MERGE (member)-[r:MemberOf]->(au)
+                    SET r.synthesized = true
+                    RETURN count(r) AS created
+                """).single()
+                n1 = r['created'] if r else 0
+
+                r = session.run("""
+                    MATCH (d:Domain)
+                    WHERE d.objectid IS NOT NULL AND d.name IS NOT NULL
+                    WITH toUpper(d.name) AS domain
+                    MATCH (au:Base {objectid: domain + '-S-1-5-11'})
+                    MERGE (ev:Base {objectid: domain + '-S-1-1-0'})
+                    ON CREATE SET ev:Group, ev.name = 'EVERYONE@' + domain,
+                                  ev.domain = domain
+                    MERGE (au)-[r:MemberOf]->(ev)
+                    SET r.synthesized = true
+                    RETURN count(r) AS created
+                """).single()
+                n2 = r['created'] if r else 0
+
+                if n1 or n2:
+                    logger.info(f"Well-known membership edges synthesized ({n1 + n2} edges)")
+        except Exception as e:
+            logger.warning(f"Well-known membership synthesis failed: {e}")
 
     def _sort_key(self, fname):
         fname_lower = fname.lower()

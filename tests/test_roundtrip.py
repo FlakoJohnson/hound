@@ -255,6 +255,46 @@ def test_canrdp_respects_user_rights_assignment(imported):
         'halfsync is in RDU but absent from SeRemoteInteractiveLogonRight'
 
 
+def test_wellknown_membership_is_synthesized(imported):
+    """Domain Users → Authenticated Users → Everyone chain must exist."""
+    with imported.session() as s:
+        au = s.run(
+            'MATCH (du:Group)-[r:MemberOf]->(au:Group) '
+            'WHERE du.objectid = $du AND au.objectid = $au '
+            'RETURN r.synthesized AS synth',
+            du=f'{TEST_SID}-513',
+            au=f'{TEST_DOMAIN}-S-1-5-11').single()
+        assert au is not None, 'Domain Users → Authenticated Users edge missing'
+        assert au['synth'] is True
+
+        ev = s.run(
+            'MATCH (au:Group)-[r:MemberOf]->(ev:Group) '
+            'WHERE au.objectid = $au AND ev.objectid = $ev '
+            'RETURN r.synthesized AS synth',
+            au=f'{TEST_DOMAIN}-S-1-5-11',
+            ev=f'{TEST_DOMAIN}-S-1-1-0').single()
+        assert ev is not None, 'Authenticated Users → Everyone edge missing'
+        assert ev['synth'] is True
+
+
+def test_wellknown_membership_not_exported(imported):
+    """Synthesized MemberOf edges must not appear in the export."""
+    blob, _ = BloodHoundExporter(imported).export_zip(domain=TEST_DOMAIN)
+    z = zipfile.ZipFile(io.BytesIO(blob))
+    all_members = {}
+    for name in z.namelist():
+        for obj in json.loads(z.read(name))['data']:
+            if obj.get('Members'):
+                all_members[obj['Properties']['name']] = [
+                    m['ObjectIdentifier'] for m in obj['Members']]
+    au_members = all_members.get(f'AUTHENTICATED USERS@{TEST_DOMAIN}', [])
+    ev_members = all_members.get(f'EVERYONE@{TEST_DOMAIN}', [])
+    assert f'{TEST_SID}-513' not in au_members, \
+        'synthesized Domain Users → Authenticated Users leaked into export'
+    assert f'{TEST_DOMAIN}-S-1-5-11' not in ev_members, \
+        'synthesized Authenticated Users → Everyone leaked into export'
+
+
 def test_synthesized_edges_are_not_exported_as_aces(imported):
     """A derived DCSync edge must not become a fabricated ACE in an export."""
     blob, _ = BloodHoundExporter(imported).export_zip(domain=TEST_DOMAIN)
@@ -280,7 +320,7 @@ def test_export_matches_graph(imported):
             if obj.get('PrimaryGroupSID'):
                 primary += 1
 
-    assert stats['nodes'] == 8
+    assert stats['nodes'] == 10  # 8 collected + 2 synthesized (Authenticated Users, Everyone)
     # GenericAll + 3 replication ACEs on the domain, WriteDacl on the computer.
     # The synthesized DCSync edge must NOT appear as a fifth.
     assert aces == 5
