@@ -1697,18 +1697,10 @@ function getCopyIcon() {
 
 function shouldShowCopyButton(key, val) {
   if (!val || val === null || val === undefined) return false;
-  const k = key.toLowerCase();
   const v = String(val);
-
-  // Show copy for names, SIDs, ObjectIDs, UPNs, DNS names, templates, etc.
-  if (k.includes('name') || k.includes('user') || k.includes('principal') ||
-      k.includes('controller') || k.includes('template') || k.includes('group') ||
-      k.includes('computer') || k.includes('dns') || k.includes('upn') ||
-      v.startsWith('S-1-5-') || v.includes('@') || v.includes('.')) {
-    return v.length > 3; // Don't show for very short values
-  }
-
-  return false;
+  if (v.length < 2) return false;
+  if (v === 'true' || v === 'false') return false;
+  return true;
 }
 
 // ── Virtual-Scroll Table Rendering ────────────────────────────────────────
