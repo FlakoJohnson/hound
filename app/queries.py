@@ -62,7 +62,9 @@ ORDER BY MemberCount DESC"""
             "name": "All GPOs",
             "description": "All Group Policy Objects — useful for GPO abuse paths",
             "cypher": """MATCH (g:GPO)
-RETURN g.name AS GPO, g.domain AS Domain, g.objectid AS GUID, g.gpcpath AS GPCPath
+RETURN g.name AS GPO, g.domain AS Domain,
+       substring(g.distinguishedname, 4, 36) AS GUID,
+       g.gpcpath AS GPCPath
 ORDER BY Domain, GPO"""
         },
         {
@@ -70,7 +72,8 @@ ORDER BY Domain, GPO"""
             "name": "GPO Links (applied to OUs)",
             "description": "Which GPOs are linked to which OUs — shows GPO scope and attack surface",
             "cypher": """MATCH (g:GPO)-[:GpLink]->(o:OU)
-RETURN g.name AS GPO, g.domain AS Domain, g.objectid AS GUID,
+RETURN g.name AS GPO, g.domain AS Domain,
+       substring(g.distinguishedname, 4, 36) AS GUID,
        o.name AS LinkedOU, o.distinguishedname AS OU_DN
 ORDER BY Domain, GPO, LinkedOU"""
         },
