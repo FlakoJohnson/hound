@@ -90,7 +90,7 @@ ORDER BY Domain, OU"""
                 {"key": "dn", "label": "OU Distinguished Name", "placeholder": "OU=Servers,OU=Computer Resources,DC=domain,DC=com"}
             ],
             "cypher": """MATCH (parent)-[:Contains]->(child)
-WHERE parent.distinguishedname = $dn
+WHERE toUpper(parent.distinguishedname) = toUpper($dn)
 RETURN child.name AS Name,
        [lbl IN labels(child) WHERE lbl <> 'Base'][0] AS Type,
        child.objectid AS ObjectID,

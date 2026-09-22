@@ -2315,7 +2315,7 @@ async function ctxListContents() {
   if (!oid && !dn) return toast('No objectid or DN for this node', 'err');
   const parentName = row.Name || row.name || row.LinkedOU || oid || dn;
 
-  const whereClause = oid ? 'parent.objectid = $oid' : 'parent.distinguishedname = $dn';
+  const whereClause = oid ? 'parent.objectid = $oid' : 'toUpper(parent.distinguishedname) = toUpper($dn)';
   const cypher = `MATCH (parent)-[:Contains]->(child)
 WHERE ${whereClause}
 RETURN child.name AS Name,
