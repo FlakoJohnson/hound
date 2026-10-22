@@ -347,17 +347,6 @@ ORDER BY Domain, gMSA"""
 RETURN coalesce(c.name, c.objectid) AS Host, m.name AS SMSA, m.domain AS Domain
 ORDER BY Domain, Host"""
         },
-        {
-            "id": "writedacl_groups",
-            "name": "WriteDACL / WriteOwner on Privileged Groups",
-            "description": "Non-admin principals with WriteDacl, WriteOwner, or GenericAll on DA/EA/Backup Ops — escalation paths",
-            "cypher": """MATCH (n)-[r:WriteDacl|WriteOwner|GenericAll|GenericWrite]->(g:Group)
-WHERE g.name =~ '(?i)(domain admins|enterprise admins|administrators|backup operators|server operators|account operators)@.*'
-AND NOT n.name =~ '(?i)(domain admins|enterprise admins|administrators|system|enterprise domain controllers)@.*'
-RETURN coalesce(n.name, n.objectid) AS Principal, [lbl IN labels(n) WHERE lbl <> 'Base'][0] AS Type,
-       type(r) AS Right, g.name AS TargetGroup
-ORDER BY TargetGroup, Right, Principal"""
-        },
     ],
 
     "ADCS / Cert Abuse": [
